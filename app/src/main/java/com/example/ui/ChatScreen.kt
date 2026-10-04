@@ -91,7 +91,6 @@ fun ChatScreen(viewModel: ChatViewModel) {
     val generatedPhotoPreview by viewModel.generatedPhotoPreview.collectAsState()
     val isProUser by viewModel.isProUser.collectAsState()
     val maloMoodColor by viewModel.maloMoodColor.collectAsState()
-    val personaStyle by viewModel.maloPersonaStyle.collectAsState()
     val animatedMoodColor by animateColorAsState(
         targetValue = maloMoodColor,
         animationSpec = tween(durationMillis = 1500, easing = LinearOutSlowInEasing),
@@ -390,7 +389,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                 if (isTyping) {
                                     val topBeaconTransition = rememberInfiniteTransition(label = "top_beacon")
                                     val beaconAlpha by topBeaconTransition.animateFloat(
-                                        initialValue = 0.3f,
+                                        initialValue = 0.35f,
                                         targetValue = 1f,
                                         animationSpec = infiniteRepeatable(
                                             animation = tween(500, easing = FastOutSlowInEasing),
@@ -413,39 +412,49 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                         fontFamily = FontFamily.Monospace
                                     )
                                 } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(animatedMoodColor)
+                                    // Mood indicator dot: reflects MalO's mood color as a subtle background entity presence
+                                    val moodPulseTransition = rememberInfiniteTransition(label = "mood_dot_pulse")
+                                    val auraAlpha by moodPulseTransition.animateFloat(
+                                        initialValue = 0.15f,
+                                        targetValue = 0.45f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(1800, easing = FastOutSlowInEasing),
+                                            repeatMode = RepeatMode.Reverse
+                                        ),
+                                        label = "aura_alpha"
                                     )
+                                    val auraScale by moodPulseTransition.animateFloat(
+                                        initialValue = 0.9f,
+                                        targetValue = 1.25f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(1800, easing = FastOutSlowInEasing),
+                                            repeatMode = RepeatMode.Reverse
+                                        ),
+                                        label = "aura_scale"
+                                    )
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.size(10.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp * auraScale)
+                                                .clip(CircleShape)
+                                                .background(animatedMoodColor.copy(alpha = auraAlpha))
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(animatedMoodColor)
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "активна",
                                         color = Color.Gray,
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "•",
-                                    color = Color.DarkGray,
-                                    fontSize = 10.sp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    color = animatedMoodColor.copy(alpha = 0.15f),
-                                    shape = RoundedCornerShape(4.dp),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, animatedMoodColor.copy(alpha = 0.4f))
-                                ) {
-                                    Text(
-                                        text = personaStyle.titleRu,
-                                        color = animatedMoodColor,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        fontFamily = FontFamily.Monospace,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                     )
                                 }
                             }
