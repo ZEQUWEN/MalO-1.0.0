@@ -73,75 +73,96 @@ export function upsertCardFromPaymentMethod(userId, paymentMethod, { makeDefault
 /* ----------------------------------------------------------- checkout --- */
 
 /**
- * Starts a card payment. The response contains a `confirmationUrl` that the
- * app opens in a Chrome Custom Tab; 3-D Secure and PAN entry happen there, so
- * card data never touches the APK or this gateway.
+ * Starts a YooKassa checkout. The app only opens the confirmation URL:
+ * 3-D Secure PAN entry and the SBP banking flow both happen on YooKassa's
+ * protected page, never in the APK or on this server.
+ *
+ * `/cards/checkout` is retained as a backwards-compatible alias for existing
+ * APKs. New clients call `/checkout` and pass `paymentMethod`: `bank_card` or
+ * `sbp`. SBP is a one-time renewal rail; only a bank card may be stored for
+ * automatic recurring charges.
  */
-cardsRouter.post(
-  '/cards/checkout',
-  requireClientKey,
-  requireUserId,
-  asyncRoute(async (req, res) => {
-    const saveCard = req.body?.saveCard !== false; // card-holder / autopay by default
-    const idempotenceKey = String(req.body?.idempotenceKey || crypto.randomUUID());
-
-    const payment = await yookassa.createPayment({
-      amount: config.subscription.priceRub,
-      currency: 'RUB',
-      description: `${config.subscription.planName} — ${config.subscription.periodDays} дней`,
-      savePaymentMethod: saveCard,
-      returnUrl: req.body?.returnUrl || config.yookassa.returnUrl,
-      metadata: { userId: req.userId, planId: config.subscription.planId, saveCard: String(saveCard) },
-      idempotenceKey,
+async function startCheckout(req, res) {
+  const requestedMethod = String(req.body?.paymentMethod || 'bank_card').toLowerCase();
+  if (!['bank_card', 'sbp'].includes(requestedMethod)) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: 'UNSUPPORTED_PAYMENT_METHOD', message: 'Use bank_card or sbp' },
     });
+  }
 
-    const record = {
-      paymentId: payment.id,
+  const saveCard = requestedMethod === 'bank_card' && req.body?.saveCard !== false;
+  const idempotenceKey = String(req.body?.idempotenceKey || crypto.randomUUID());
+
+  const payment = await yookassa.createPayment({
+    amount: config.subscription.priceRub,
+    currency: 'RUB',
+    description: `${config.subscription.planName} — ${config.subscription.periodDays} дней`,
+    paymentMethod: requestedMethod,
+    savePaymentMethod: saveCard,
+    returnUrl: req.body?.returnUrl || config.yookassa.returnUrl,
+    metadata: {
       userId: req.userId,
-      provider: 'yookassa',
-      kind: 'checkout',
-      status: payment.status,
-      amount: `${config.subscription.priceRub} RUB`,
-      saveCard,
-      createdAt: Date.now(),
-      confirmationUrl: payment.confirmation?.confirmation_url || null,
-    };
-    db.savePayment(record);
+      planId: config.subscription.planId,
+      paymentMethod: requestedMethod,
+      saveCard: String(saveCard),
+    },
+    idempotenceKey,
+  });
 
-    // Mock/instant-success path (saved-card reuse inside the sandbox).
-    if (payment.status === 'succeeded') {
-      const card = saveCard ? upsertCardFromPaymentMethod(req.userId, payment.payment_method) : null;
-      activateSubscription({
-        userId: req.userId,
-        paymentMethod: 'CARD',
-        transactionId: payment.id,
-        amount: record.amount,
-        autoRenew: Boolean(card),
-        cardId: card?.cardId || null,
-      });
-    }
+  const record = {
+    paymentId: payment.id,
+    userId: req.userId,
+    provider: 'yookassa',
+    kind: 'checkout',
+    paymentMethod: requestedMethod,
+    status: payment.status,
+    amount: `${config.subscription.priceRub} RUB`,
+    saveCard,
+    createdAt: Date.now(),
+    confirmationUrl: payment.confirmation?.confirmation_url || null,
+  };
+  db.savePayment(record);
 
-    return res.status(201).json({
-      ok: true,
-      payment: {
-        paymentId: payment.id,
-        status: payment.status,
-        confirmationUrl: record.confirmationUrl,
-        amount: record.amount,
-        saveCard,
-      },
-      subscription: serializeSubscription(getSubscription(req.userId)),
+  // Mock/instant-success path (used only by the automated test suite).
+  if (payment.status === 'succeeded') {
+    const card = saveCard ? upsertCardFromPaymentMethod(req.userId, payment.payment_method) : null;
+    const previous = getSubscription(req.userId);
+    activateSubscription({
+      userId: req.userId,
+      paymentMethod: requestedMethod === 'sbp' ? 'SBP' : 'CARD',
+      transactionId: payment.id,
+      amount: record.amount,
+      autoRenew: card?.cardId != null || (previous.autoRenew && previous.cardId != null),
+      cardId: card?.cardId || previous.cardId || null,
     });
-  }),
-);
+  }
+
+  return res.status(201).json({
+    ok: true,
+    payment: {
+      paymentId: payment.id,
+      status: payment.status,
+      paymentMethod: requestedMethod,
+      confirmationUrl: record.confirmationUrl,
+      amount: record.amount,
+      saveCard,
+    },
+    subscription: serializeSubscription(getSubscription(req.userId)),
+  });
+}
+
+cardsRouter.post('/checkout', requireClientKey, requireUserId, asyncRoute(startCheckout));
+cardsRouter.post('/cards/checkout', requireClientKey, requireUserId, asyncRoute(startCheckout));
 
 /** Poll a pending card payment (fallback when the webhook is late). */
 cardsRouter.get(
   '/cards/payments/:paymentId',
   requireClientKey,
+  requireUserId,
   asyncRoute(async (req, res) => {
     const stored = db.getPayment(req.params.paymentId);
-    if (!stored) {
+    if (!stored || stored.userId !== req.userId) {
       return res.status(404).json({ ok: false, error: { code: 'PAYMENT_NOT_FOUND', message: 'Unknown payment' } });
     }
     if (['pending', 'waiting_for_capture'].includes(stored.status)) {
@@ -151,16 +172,18 @@ cardsRouter.get(
           stored.status = remote.status;
           db.savePayment(stored);
           if (remote.status === 'succeeded') {
-            const card = stored.saveCard
+            const isSbp = stored.paymentMethod === 'sbp' || remote.payment_method?.type === 'sbp';
+            const card = !isSbp && stored.saveCard
               ? upsertCardFromPaymentMethod(stored.userId, remote.payment_method)
               : null;
+            const previous = getSubscription(stored.userId);
             activateSubscription({
               userId: stored.userId,
-              paymentMethod: 'CARD',
+              paymentMethod: isSbp ? 'SBP' : 'CARD',
               transactionId: remote.id,
               amount: stored.amount,
-              autoRenew: Boolean(card),
-              cardId: card?.cardId || null,
+              autoRenew: card?.cardId != null || (previous.autoRenew && previous.cardId != null),
+              cardId: card?.cardId || previous.cardId || null,
               meta: { source: 'poll' },
             });
           }

@@ -23,7 +23,11 @@ catalogRouter.get('/catalog', (_req, res) => {
       provider: 'yookassa',
       currency: 'RUB',
       brands: ['VISA', 'MASTERCARD', 'MIR', 'MAESTRO', 'UNIONPAY', 'JCB'],
+      paymentMethods: ['bank_card', 'sbp'],
       supportsSavedCards: true,
+      // СБП is a redirect, one-time payment flow. Auto-renewal is charged
+      // against a separately saved bank-card payment method only.
+      supportsSbp: true,
     },
     crypto: {
       enabled: isCryptoBotConfigured(),

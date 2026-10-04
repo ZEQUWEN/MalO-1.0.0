@@ -48,38 +48,47 @@ and says `start.sh not found`, that service is building a different commit,
 branch, or root directory: the tracked `start.sh`, `build.sh`, `Dockerfile`,
 and `railway.json` must be visible at the deployment root.
 
-## Billing (cards + crypto)
+## Billing (ЮKassa, СБП + Telegram CryptoBot)
 
 Payments live in [`server/`](server/README.md) — a small Node/Express gateway
-that the Railway image now runs alongside the APK download page:
+that Railway runs alongside the APK download page:
 
-* **Банковские карты** — ЮKassa (Visa / Mastercard / МИР). The PAN and the CVC
-  are entered on the acquirer's hosted 3‑D Secure page; the app only keeps the
-  scheme, the last four digits and a recurring token.
-* **Криптовалюта** — CryptoBot (Telegram *Crypto Pay API*) with an explicit
-  network selector: TRON (TRC‑20), TON, Ethereum (ERC‑20), BNB Smart Chain,
-  Solana, Bitcoin, Litecoin, Polygon.
-* **Вебхуки** — `POST /api/webhooks/cryptobot` (HMAC‑SHA256 over the raw body
-  with `SHA256(token)` as the key) and `POST /api/webhooks/yookassa`
-  (source-IP allowlist). Both are replay-protected and idempotent.
-* **Картхолдер** — saved cards with a card-shaped UI, auto-payment toggle and
-  in-app subscription cancellation.
+* **Банковские карты** — ЮKassa (Visa / Mastercard / МИР and other schemes
+  returned by the acquirer). The Android app does **not** render a PAN/CVC
+  form. It opens ЮKassa's hosted 3‑D Secure checkout, and the gateway retains
+  only the reusable `payment_method.id` needed for card auto-renewal.
+* **СБП** — the app creates an explicit ЮKassa `sbp` redirect checkout. This is
+  available both for the initial payment and for manual subscription renewal;
+  it never creates a locally saved card or silently enables auto-renewal.
+* **Telegram CryptoBot** — an additional Crypto Pay option. The server creates
+  a fixed invoice for the plan price and opens its `bot_invoice_url` / Mini App
+  URL. The signed `invoice_paid` webhook is followed by a provider API lookup;
+  invoice ID, status, asset, decimal amount and server-issued payload must all
+  match before Pro is activated.
+* **«Мои карты»** — a dedicated mini-app-style submenu with a horizontal swipe
+  pager. It mirrors only the scheme, masked number, expiry, and selected-card
+  state received from the gateway. Users can swipe to a card, choose it for
+  auto-renewal, add another card through ЮKassa, or delete it.
+* **Webhooks** — `POST /api/webhooks/yookassa` is source-IP allowlisted;
+  `POST /api/webhooks/cryptobot` verifies `HMAC-SHA256(SHA256(token), rawBody)`.
+  Both are replay-protected and idempotent, and are the authority that
+  activates or extends a subscription after payment confirmation.
 
-In the app, the payment system (Visa / Mastercard / МИР / AmEx / UnionPay /
-JCB / Maestro) is detected live from the typed BIN and its logo is drawn with
-Compose primitives — see `app/src/main/java/com/example/payments/CardBrand.kt`
-and `app/src/main/java/com/example/ui/payments/`.
+`CardBrand.kt` retains correct local rendering for the scheme supplied by
+ЮKassa and other masked descriptors. In particular, the МИР range `2200`–
+`2205` is checked before Mastercard's range, so `22051387` resolves to **МИР**
+and is displayed with the correct mark.
 
-The production deployment lives at **https://malo.up.railway.app**, so the
-webhooks to register with the providers are:
+The production Railway deployment lives at **https://malo.up.railway.app**.
+Register both payment webhooks:
 
 ```
-https://malo.up.railway.app/api/webhooks/cryptobot
 https://malo.up.railway.app/api/webhooks/yookassa
+https://malo.up.railway.app/api/webhooks/cryptobot
 ```
 
-`GET /api/webhooks` prints that cheat-sheet at runtime. Full instructions
-(Railway variables, volume, smoke tests) are in [DEPLOY.md](DEPLOY.md).
+`GET /api/webhooks` prints the runtime URLs. Full Railway variables, volume,
+webhook, and smoke-test instructions are in [DEPLOY.md](DEPLOY.md).
 
 Point the app at the gateway via `.env`:
 
@@ -88,8 +97,8 @@ MALO_GATEWAY_URL=https://malo.up.railway.app
 MALO_CLIENT_KEY=<same value as on the gateway>
 ```
 
-Setting `MALO_GATEWAY_URL=MY_MALO_GATEWAY_URL` builds an offline/demo APK that
-falls back to the bundled `SubscriptionValidator`.
+Setting `MALO_GATEWAY_URL=MY_MALO_GATEWAY_URL` disables checkout in that build;
+it never replaces a real payment with a demo card transaction.
 
 ## API keys
 

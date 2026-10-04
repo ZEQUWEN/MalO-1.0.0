@@ -75,6 +75,8 @@ function mockCall(path, { body }) {
   if (path === '/payments' && body) {
     const id = crypto.randomUUID();
     const savedMethod = body.payment_method_id;
+    const methodType = savedMethod ? 'bank_card' : body.payment_method_data?.type || 'bank_card';
+    const canSave = methodType === 'bank_card';
     const payment = {
       id,
       status: savedMethod ? 'succeeded' : 'pending',
@@ -85,21 +87,33 @@ function mockCall(path, { body }) {
       created_at: new Date().toISOString(),
       confirmation: savedMethod
         ? undefined
-        : { type: 'redirect', confirmation_url: `https://yoomoney.ru/checkout/payments/v2/contract?orderId=${id}` },
-      payment_method: {
-        type: 'bank_card',
-        id: savedMethod || crypto.randomUUID(),
-        saved: Boolean(body.save_payment_method || savedMethod),
-        title: 'Bank card *4477',
-        card: {
-          first6: '220220',
-          last4: '4477',
-          expiry_month: '12',
-          expiry_year: '2030',
-          card_type: 'MIR',
-          issuer_country: 'RU',
-        },
-      },
+        : {
+            type: 'redirect',
+            confirmation_url:
+              methodType === 'sbp'
+                ? `https://yoomoney.ru/checkout/payments/sbp?orderId=${id}`
+                : `https://yoomoney.ru/checkout/payments/v2/contract?orderId=${id}`,
+          },
+      payment_method: canSave
+        ? {
+            type: 'bank_card',
+            id: savedMethod || crypto.randomUUID(),
+            saved: Boolean(body.save_payment_method || savedMethod),
+            title: 'Bank card *4477',
+            card: {
+              first6: '220220',
+              last4: '4477',
+              expiry_month: '12',
+              expiry_year: '2030',
+              card_type: 'MIR',
+              issuer_country: 'RU',
+            },
+          }
+        : {
+            type: 'sbp',
+            id: crypto.randomUUID(),
+            saved: false,
+          },
     };
     mockPayments.set(id, payment);
     return Promise.resolve(payment);
@@ -137,20 +151,26 @@ export const yookassa = {
     description,
     metadata,
     savePaymentMethod = false,
+    paymentMethod = 'bank_card',
     returnUrl = config.yookassa.returnUrl,
     idempotenceKey,
-  }) =>
-    call('/payments', {
+  }) => {
+    const isSbp = paymentMethod === 'sbp';
+    return call('/payments', {
       idempotenceKey,
       body: {
         amount: { value: String(amount), currency },
         capture: true,
         description,
         metadata,
-        save_payment_method: savePaymentMethod,
+        // Explicitly select the YooKassa flow. It keeps the in-app surface out
+        // of PCI scope: PAN/CVC or the SBP banking app are handled by YooKassa.
+        payment_method_data: { type: isSbp ? 'sbp' : 'bank_card' },
+        save_payment_method: !isSbp && savePaymentMethod,
         confirmation: { type: 'redirect', return_url: returnUrl },
       },
-    }),
+    });
+  },
 
   /** Recurring charge against a previously saved `payment_method.id`. */
   chargeSavedCard: ({ amount, currency = 'RUB', description, metadata, paymentMethodId, idempotenceKey }) =>

@@ -22,7 +22,6 @@ import com.example.data.Message
 import com.example.data.MessageDatabase
 import com.example.util.AudioRecorderHelper
 import com.example.util.PdfExtractor
-import com.example.util.PaymentValidationResult
 import com.example.util.SubscriptionValidator
 import com.example.util.VideoThumbnailHelper
 import com.example.worker.NotificationCheckWorker
@@ -127,30 +126,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun processCardPayment(
-        cardNumber: String,
-        expiry: String,
-        cvc: String
-    ): PaymentValidationResult {
-        val result = SubscriptionValidator.processCardPayment(context, cardNumber, expiry, cvc)
-        if (result is PaymentValidationResult.Success) {
-            isProUser.value = true
-        }
-        return result
-    }
-
-    fun processCryptoPayment(
-        cryptoSymbol: String,
-        network: String,
-        txHash: String,
-        amount: String
-    ): PaymentValidationResult {
-        val result = SubscriptionValidator.processCryptoPayment(context, cryptoSymbol, network, txHash, amount)
-        if (result is PaymentValidationResult.Success) {
-            isProUser.value = true
-        }
-        return result
-    }
 
     fun setProUser(value: Boolean) {
         if (!value) {

@@ -181,7 +181,7 @@ fun CreditCardVisual(
                         letterSpacing = 1.sp
                     )
                     Text(
-                        text = holderName.ifBlank { "CARD HOLDER" },
+                        text = holderName.ifBlank { "—" },
                         color = Color.White.copy(alpha = 0.9f),
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,

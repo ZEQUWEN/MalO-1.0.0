@@ -10,7 +10,7 @@ process.env.MALO_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'malo-gw-'));
 
 const { initStore, resetStore, db } = await import('../src/store.js');
 const { createApp } = await import('../src/app.js');
-const { signCryptoBotPayload, verifyCryptoBotSignature } = await import('../src/providers/cryptobot.js');
+const { signCryptoBotPayload, verifyCryptoBotSignature, __mockMarkPaid } = await import('../src/providers/cryptobot.js');
 const { isTrustedYooKassaIp } = await import('../src/providers/yookassa.js');
 const { isNetworkAllowed, buildCatalog } = await import('../src/networks.js');
 
@@ -55,6 +55,8 @@ test('catalog exposes crypto networks for every asset', async () => {
   assert.ok(networkIds.includes('SOLANA'));
   assert.ok(body.crypto.assets.some((a) => a.asset === 'BTC'));
   assert.deepEqual(body.card.brands.slice(0, 3), ['VISA', 'MASTERCARD', 'MIR']);
+  assert.deepEqual(body.card.paymentMethods, ['bank_card', 'sbp']);
+  assert.equal(body.card.supportsSbp, true);
 });
 
 test('network validation rejects impossible asset/network pairs', () => {
@@ -84,6 +86,8 @@ test('cryptobot webhook activates Pro and is idempotent', async () => {
   assert.ok(invoice.payUrl.startsWith('https://t.me/'));
 
   const stored = db.getInvoice(invoice.invoiceId);
+  // The webhook handler independently reads this provider invoice before granting Pro.
+  __mockMarkPaid(invoice.invoiceId);
   const update = {
     update_id: 90001,
     update_type: 'invoice_paid',
@@ -128,6 +132,44 @@ test('cryptobot webhook activates Pro and is idempotent', async () => {
   assert.equal(replayBody.duplicate, true);
   const sub2 = await (await api(`/api/subscription?userId=${USER}`)).json();
   assert.equal(sub2.subscription.currentPeriodEnd, firstEnd);
+});
+
+test('cryptobot webhook rejects a signed update when the provider invoice amount differs', async () => {
+  const user = 'malo-crypto-amount-user';
+  const created = await api('/api/crypto/invoices', {
+    method: 'POST',
+    body: JSON.stringify({ userId: user, asset: 'USDT', network: 'TRON' }),
+  });
+  const { invoice } = await created.json();
+  const stored = db.getInvoice(invoice.invoiceId);
+  const providerInvoice = __mockMarkPaid(invoice.invoiceId);
+  providerInvoice.amount = '999.00';
+
+  const update = {
+    update_id: 90002,
+    update_type: 'invoice_paid',
+    payload: {
+      invoice_id: invoice.invoiceId,
+      asset: 'USDT',
+      amount: invoice.amount,
+      status: 'paid',
+      payload: JSON.stringify({ v: 1, payloadId: stored.payloadId, userId: user, network: 'TRON' }),
+    },
+  };
+  const raw = JSON.stringify(update);
+  const hook = await fetch(`${baseUrl}/api/webhooks/cryptobot`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'crypto-pay-api-signature': signCryptoBotPayload(raw, process.env.CRYPTOBOT_TOKEN),
+    },
+    body: raw,
+  });
+  assert.equal(hook.status, 409);
+  const error = await hook.json();
+  assert.equal(error.error.code, 'INVOICE_AMOUNT_MISMATCH');
+  const subscription = await (await api(`/api/subscription?userId=${user}`)).json();
+  assert.equal(subscription.subscription.status, 'inactive');
 });
 
 test('cryptobot signature verification rejects tampered payloads', () => {
@@ -211,6 +253,40 @@ test('yookassa webhook saves the card and enables autopay, cancel works', async 
   ).json();
   assert.equal(deleted.cards.length, 0);
   assert.equal(deleted.subscription.autoRenew, false);
+});
+
+test('SBP checkout is a YooKassa one-time rail and never creates a saved card', async () => {
+  const user = 'malo-sbp-user-0003';
+  const checkout = await api('/api/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ userId: user, paymentMethod: 'sbp', saveCard: true }),
+  });
+  assert.equal(checkout.status, 201);
+  const { payment } = await checkout.json();
+  assert.equal(payment.paymentMethod, 'sbp');
+  assert.equal(payment.saveCard, false);
+  assert.ok(payment.confirmationUrl.includes('/sbp?'));
+
+  const notification = {
+    type: 'notification',
+    event: 'payment.succeeded',
+    object: {
+      id: payment.paymentId,
+      status: 'succeeded',
+      paid: true,
+      amount: { value: '499.00', currency: 'RUB' },
+      metadata: { userId: user, paymentMethod: 'sbp', saveCard: 'false' },
+      payment_method: { type: 'sbp', id: 'sbp-operation-1', saved: false },
+    },
+  };
+  const hook = await api('/api/webhooks/yookassa', { method: 'POST', body: JSON.stringify(notification) });
+  assert.equal(hook.status, 200);
+
+  const result = await (await api(`/api/cards?userId=${user}`)).json();
+  assert.equal(result.cards.length, 0);
+  assert.equal(result.subscription.status, 'active');
+  assert.equal(result.subscription.paymentMethod, 'SBP');
+  assert.equal(result.subscription.autoRenew, false);
 });
 
 test('yookassa ip allowlist matches documented subnets', () => {

@@ -42,13 +42,19 @@ interface PaymentGatewayApi {
     suspend fun createInvoice(@Body body: CreateInvoiceRequest): Response<InvoiceResponse>
 
     @GET("api/crypto/invoices/{invoiceId}")
-    suspend fun invoiceStatus(@Path("invoiceId") invoiceId: Long): Response<InvoiceResponse>
+    suspend fun invoiceStatus(
+        @Path("invoiceId") invoiceId: Long,
+        @Query("userId") userId: String
+    ): Response<InvoiceResponse>
 
-    @POST("api/cards/checkout")
+    @POST("api/checkout")
     suspend fun cardCheckout(@Body body: CardCheckoutRequest): Response<CardCheckoutResponse>
 
     @GET("api/cards/payments/{paymentId}")
-    suspend fun cardPaymentStatus(@Path("paymentId") paymentId: String): Response<PaymentStatusResponse>
+    suspend fun cardPaymentStatus(
+        @Path("paymentId") paymentId: String,
+        @Query("userId") userId: String
+    ): Response<PaymentStatusResponse>
 
     @GET("api/cards")
     suspend fun cards(@Query("userId") userId: String): Response<CardsResponse>
@@ -77,8 +83,8 @@ sealed class GatewayResult<out T> {
  * Thin client around [PaymentGatewayApi].
  *
  * `MALO_GATEWAY_URL` / `MALO_CLIENT_KEY` come from `.env` through the Secrets
- * Gradle plugin. When the URL is a placeholder the app transparently falls back
- * to the offline validator, so debug builds keep working without a server.
+ * Gradle plugin. When the URL is a placeholder checkout is disabled; the app
+ * never substitutes an offline or test-card payment for a real transaction.
  */
 object PaymentGateway {
 
@@ -175,23 +181,32 @@ object PaymentGateway {
     suspend fun createInvoice(context: Context, asset: String, network: String): GatewayResult<InvoiceResponse> =
         call { it.createInvoice(CreateInvoiceRequest(userId(context), asset.uppercase(), network.uppercase())) }
 
-    suspend fun invoiceStatus(invoiceId: Long): GatewayResult<InvoiceResponse> =
-        call { it.invoiceStatus(invoiceId) }
+    suspend fun invoiceStatus(context: Context, invoiceId: Long): GatewayResult<InvoiceResponse> =
+        call { it.invoiceStatus(invoiceId, userId(context)) }
 
-    suspend fun cardCheckout(context: Context, saveCard: Boolean): GatewayResult<CardCheckoutResponse> =
+    /**
+     * Starts a hosted YooKassa payment. `bank_card` may be saved for renewal;
+     * `sbp` is an explicit one-time СБП checkout. No PAN/CVC is sent here.
+     */
+    suspend fun cardCheckout(
+        context: Context,
+        saveCard: Boolean,
+        paymentMethod: String = "bank_card"
+    ): GatewayResult<CardCheckoutResponse> =
         call {
             it.cardCheckout(
                 CardCheckoutRequest(
                     userId = userId(context),
-                    saveCard = saveCard,
+                    saveCard = saveCard && paymentMethod == "bank_card",
+                    paymentMethod = paymentMethod,
                     returnUrl = "malo://payment/return",
                     idempotenceKey = UUID.randomUUID().toString()
                 )
             )
         }
 
-    suspend fun cardPaymentStatus(paymentId: String): GatewayResult<PaymentStatusResponse> =
-        call { it.cardPaymentStatus(paymentId) }
+    suspend fun cardPaymentStatus(context: Context, paymentId: String): GatewayResult<PaymentStatusResponse> =
+        call { it.cardPaymentStatus(paymentId, userId(context)) }
 
     suspend fun cards(context: Context): GatewayResult<CardsResponse> = call { it.cards(userId(context)) }
 
