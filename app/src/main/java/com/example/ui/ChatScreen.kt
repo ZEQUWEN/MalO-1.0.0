@@ -372,7 +372,10 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                     color = Color.White,
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
@@ -414,7 +417,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                         color = animatedMoodColor,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Medium,
-                                        fontFamily = FontFamily.Monospace
+                                        fontFamily = FontFamily.Monospace,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 } else {
                                     // Mood indicator dot: reflects MalO's mood color as a subtle background entity presence
@@ -1396,12 +1401,16 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                             color = Color.White,
                                             fontSize = 13.sp,
                                             fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "прикреплен к следующему отправлению",
+                                            text = "прикреплён к следующему отправлению",
                                             color = Color.Gray,
-                                            fontSize = 11.sp
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                     IconButton(onClick = { viewModel.clearAttachment() }) {
@@ -1415,6 +1424,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .imePadding()
                                 .navigationBarsPadding()
                         ) {
                             AnimatedVisibility(

@@ -80,11 +80,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkSubscriptionStatus() {
         isProUser.value = SubscriptionValidator.isSubscriptionValid(context)
+        syncSubscriptionWithGateway()
+    }
+
+    /**
+     * Reconciles the local receipt with the payment gateway. Needed after the
+     * user pays a CryptoBot invoice or completes 3-D Secure in a browser:
+     * the confirmation arrives at our webhook, not at the device.
+     */
+    fun syncSubscriptionWithGateway() {
+        if (!com.example.payments.PaymentGateway.isConfigured) return
+        viewModelScope.launch {
+            when (val result = com.example.payments.PaymentGateway.subscription(context)) {
+                is com.example.payments.GatewayResult.Success -> {
+                    val remote = result.data.subscription ?: return@launch
+                    if (remote.isActive) {
+                        SubscriptionValidator.activateFromGateway(
+                            context = context,
+                            transactionId = remote.lastTransactionId ?: remote.subscriptionId.orEmpty(),
+                            paymentMethod = remote.paymentMethod ?: "GATEWAY",
+                            amountPaid = remote.lastAmount ?: "",
+                            expiresAt = remote.currentPeriodEnd ?: System.currentTimeMillis()
+                        )
+                        isProUser.value = true
+                    } else if (remote.status == "canceled" || remote.status == "expired") {
+                        SubscriptionValidator.revokeSubscription(context)
+                        isProUser.value = false
+                    }
+                    com.example.payments.CardVault.syncFromGateway(
+                        context,
+                        result.data.cards.map { it.toSavedCard() }
+                    )
+                }
+                else -> Unit
+            }
+        }
     }
 
     fun downgradeToBase() {
         SubscriptionValidator.revokeSubscription(context)
         isProUser.value = false
+        if (com.example.payments.PaymentGateway.isConfigured) {
+            viewModelScope.launch {
+                com.example.payments.PaymentGateway.cancelSubscription(context, immediate = true)
+            }
+        }
     }
 
     fun processCardPayment(

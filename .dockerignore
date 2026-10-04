@@ -11,3 +11,8 @@ local.properties
 
 # APKs in public are generated again by build.sh in the builder stage.
 public/*.apk
+
+# Node gateway artefacts (dependencies are installed inside the image).
+server/node_modules
+server/.data
+server/.env

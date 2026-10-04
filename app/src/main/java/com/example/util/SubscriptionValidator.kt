@@ -206,6 +206,34 @@ object SubscriptionValidator {
     }
 
     /**
+     * Mirrors an entitlement confirmed by the payment gateway (card webhook or
+     * CryptoBot invoice) into the locally signed receipt, so the app keeps
+     * working offline until the paid period runs out.
+     */
+    fun activateFromGateway(
+        context: Context,
+        transactionId: String,
+        paymentMethod: String,
+        amountPaid: String,
+        expiresAt: Long
+    ): SubscriptionReceipt {
+        val now = System.currentTimeMillis()
+        val subId = UUID.randomUUID().toString()
+        val receipt = SubscriptionReceipt(
+            subscriptionId = subId,
+            planName = "Pro (DeepSeek AI)",
+            paymentMethod = paymentMethod,
+            transactionId = transactionId,
+            amountPaid = amountPaid,
+            activatedAt = now,
+            expiresAt = expiresAt,
+            signature = computeHmac(subId, paymentMethod, transactionId, now, expiresAt)
+        )
+        saveReceipt(context, receipt)
+        return receipt
+    }
+
+    /**
      * Creates a cryptographically signed subscription receipt valid for 30 days.
      */
     private fun createSignedReceipt(

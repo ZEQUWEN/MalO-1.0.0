@@ -28,9 +28,15 @@ WORKDIR /workspace
 COPY . .
 RUN chmod +x build.sh start.sh && ./build.sh
 
-FROM python:3.12-alpine AS runtime
+FROM node:20-alpine AS runtime
 
 WORKDIR /app
+
+# Payment gateway (ЮKassa card billing + CryptoBot webhooks).
+COPY server/package.json server/package-lock.json* /app/server/
+RUN cd /app/server && npm ci --omit=dev || npm install --omit=dev
+COPY server/src /app/server/src
+
 COPY --from=builder /workspace/public /app/public
 COPY start.sh /app/start.sh
 

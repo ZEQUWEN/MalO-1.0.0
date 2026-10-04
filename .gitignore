@@ -18,3 +18,11 @@ local.properties
 *.jks
 *.keystore
 /public/*.apk
+
+# Payment gateway (server/)
+server/node_modules
+server/.data
+server/.env
+
+# Gateway runtime state
+.data/
