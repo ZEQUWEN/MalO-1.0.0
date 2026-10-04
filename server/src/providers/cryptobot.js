@@ -13,12 +13,14 @@ import crypto from 'node:crypto';
 import { config } from '../config.js';
 
 export class CryptoBotError extends Error {
-  constructor(message, { status = 502, code = 'CRYPTOBOT_ERROR', details = null } = {}) {
+  constructor(message, { status = 502, code = 'CRYPTOBOT_ERROR', details = null, retryAfter = null } = {}) {
     super(message);
     this.name = 'CryptoBotError';
     this.status = status;
     this.code = code;
     this.details = details;
+    /** Seconds reported by the provider; surfaced as a Retry-After header. */
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -57,12 +59,42 @@ async function call(method, params = {}) {
   try {
     body = await response.json();
   } catch {
-    throw new CryptoBotError(`Crypto Pay ${method}: non-JSON response (${response.status})`);
+    throw new CryptoBotError(`Crypto Pay ${method}: non-JSON response (${response.status})`, {
+      code: 'CRYPTOBOT_BAD_RESPONSE',
+      details: { upstreamStatus: response.status },
+    });
   }
 
   if (!response.ok || body.ok === false) {
-    throw new CryptoBotError(body?.error?.name || `Crypto Pay ${method} failed`, {
-      details: body?.error ?? body,
+    const upstreamStatus = response.status;
+    const upstreamError = body?.error ?? null;
+
+    // Collapsing every provider failure into one opaque 502 is what makes a
+    // Crypto Pay outage indistinguishable from a revoked token or a genuine
+    // rate limit. Keep the cause in the error code so the operator is not left
+    // guessing which of the three it was.
+    if (upstreamStatus === 429) {
+      const header = Number(response.headers?.get?.('retry-after'));
+      throw new CryptoBotError(`Crypto Pay rate limit reached on ${method}`, {
+        status: 429,
+        code: 'CRYPTOBOT_RATE_LIMITED',
+        retryAfter: Number.isFinite(header) && header > 0 ? header : null,
+        details: { upstreamStatus, error: upstreamError },
+      });
+    }
+
+    // 401/403 here means CRYPTOBOT_TOKEN is wrong, revoked, or points at the
+    // other network (mainnet token against testnet-pay, or the reverse).
+    if (upstreamStatus === 401 || upstreamStatus === 403) {
+      throw new CryptoBotError(`Crypto Pay rejected the app token on ${method}`, {
+        status: 502,
+        code: 'CRYPTOBOT_UNAUTHORIZED',
+        details: { upstreamStatus, error: upstreamError, apiBase: config.cryptobot.apiBase },
+      });
+    }
+
+    throw new CryptoBotError(upstreamError?.name || `Crypto Pay ${method} failed`, {
+      details: { upstreamStatus, error: upstreamError ?? body },
     });
   }
   if (!Object.hasOwn(body || {}, 'result')) {

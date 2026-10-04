@@ -36,6 +36,10 @@ export function asyncRoute(handler) {
 export function errorHandler(err, _req, res, _next) {
   const status = err.status || 500;
   if (status >= 500) console.error('[malo-gateway]', err);
+  // A 429 is only actionable for the caller when it says how long to wait.
+  if (status === 429 && Number.isFinite(err.retryAfter) && err.retryAfter > 0) {
+    res.set('Retry-After', String(Math.ceil(err.retryAfter)));
+  }
   res.status(status).json({
     ok: false,
     error: {

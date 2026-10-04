@@ -159,6 +159,20 @@ on-chain proof.
 Use `https://pay.crypt.bot/api` for mainnet. Set a testnet endpoint/token only
 in a separate Railway environment; never mix testnet and production state.
 
+### `CRYPTOBOT_API_BASE` is not the webhook URL
+
+These two values point in opposite directions and must never be swapped:
+
+| | Value | Direction | Where it is configured |
+|---|---|---|---|
+| `CRYPTOBOT_API_BASE` | `https://pay.crypt.bot/api` | gateway **→** Crypto Pay (outbound; `createInvoice`, `getInvoices`, `getExchangeRates`) | Railway Variables (optional — this is already the default) |
+| Webhook URL | `https://malo.up.railway.app/api/webhooks/cryptobot` | Crypto Pay **→** gateway (inbound `invoice_paid`) | @CryptoBot → Crypto Pay → My Apps → Webhooks. **Not** a Railway variable |
+
+Setting `CRYPTOBOT_API_BASE` to the webhook URL makes the gateway POST
+`createInvoice` back to its own webhook route, which answers `400 BAD_PAYLOAD`;
+the app then reports `CRYPTOBOT_ERROR` with `details.upstreamStatus: 400`. It
+does not produce a 429.
+
 ## 5. Build the Android app against Railway
 
 At the repository root, set non-secret gateway settings before making the APK:
@@ -210,6 +224,15 @@ curl https://malo.up.railway.app/api/webhooks
 curl -I https://malo.up.railway.app/favicon.ico
 ```
 
+When the app reports a gateway error, run the responder forensics instead of
+guessing which layer produced it. It reports whether the MalO Express app
+answered (its JSON body and `error.code`) or an intermediary did:
+
+```sh
+./server/scripts/diagnose-gateway.sh --url https://malo.up.railway.app --key "$MALO_CLIENT_KEY"
+./server/scripts/diagnose-gateway.sh --invoice   # also replays the real createInvoice call
+```
+
 `/api/health` must report `providers.yookassa: true` after the shop ID and
 secret key are configured. `GET /api/catalog` must include:
 
@@ -221,6 +244,9 @@ secret key are configured. `GET /api/catalog` must include:
 
 | Symptom | Cause / action |
 |---|---|
+| App shows «Шлюз вернул ошибку 429» | **Not produced by this codebase** — `server/src` has no rate limiter, and a Crypto Pay 429 is reported as `CRYPTOBOT_RATE_LIMITED` with a readable message instead. A bare `429` is the app's fallback text for a response whose body was *not* MalO JSON, i.e. an intermediary (Railway edge, Cloudflare on a custom domain) answered before Express. Confirm with `./server/scripts/diagnose-gateway.sh --url <gateway> --key <MALO_CLIENT_KEY>`; if the Railway deploy log has no matching `"POST /api/crypto/invoices"` line, the request never reached the app. |
+| `CRYPTOBOT_RATE_LIMITED` | Crypto Pay itself throttled the gateway. Honour the `Retry-After` header; check whether the same app token is in use by another deployment or environment. |
+| `CRYPTOBOT_UNAUTHORIZED` | `CRYPTOBOT_TOKEN` is wrong, revoked, or belongs to the other network — a mainnet token sent to `testnet-pay.crypt.bot` fails exactly this way. The reported `details.apiBase` shows which endpoint refused it. |
 | `YOOKASSA_NOT_CONFIGURED` | Set `YOOKASSA_SHOP_ID` and `YOOKASSA_SECRET_KEY` in Railway Variables, then redeploy. |
 | `CRYPTOBOT_NOT_CONFIGURED` | Add a fresh `CRYPTOBOT_TOKEN` in Railway Variables and redeploy. Never put this secret into the APK. |
 | `BAD_SIGNATURE` / `INVOICE_*_MISMATCH` from CryptoBot | Check that the app token is from the same Crypto Pay app and that the invoice was created by this gateway; the server intentionally refuses mismatched invoices. |
