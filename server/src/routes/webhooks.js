@@ -1,0 +1,155 @@
+/**
+ * Inbound webhooks.
+ *
+ *  POST /api/webhooks/cryptobot  — Crypto Pay (Telegram @CryptoBot)
+ *  POST /api/webhooks/yookassa   — ЮKassa card notifications
+ *
+ * Both handlers are idempotent: Telegram and YooKassa retry deliveries until
+ * they receive 2xx, so a repeated event must never grant a second period.
+ */
+
+import { Router } from 'express';
+import { config } from '../config.js';
+import { db } from '../store.js';
+import { NETWORKS } from '../networks.js';
+import { verifyCryptoBotSignature } from '../providers/cryptobot.js';
+import { isTrustedYooKassaIp } from '../providers/yookassa.js';
+import { activateSubscription, getSubscription } from '../subscriptions.js';
+import { upsertCardFromPaymentMethod } from './cards.js';
+
+export const webhooksRouter = Router();
+
+const parseJson = (raw) => {
+  try {
+    return JSON.parse(raw.toString('utf8'));
+  } catch {
+    return null;
+  }
+};
+
+/* ------------------------------------------------------------ CryptoBot -- */
+
+webhooksRouter.post('/webhooks/cryptobot', (req, res) => {
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''), 'utf8');
+  const signature = req.get('crypto-pay-api-signature');
+
+  if (!config.mockProviders && !verifyCryptoBotSignature(raw, signature)) {
+    return res.status(401).json({ ok: false, error: { code: 'BAD_SIGNATURE' } });
+  }
+
+  const update = parseJson(raw);
+  if (!update || !update.update_id) {
+    return res.status(400).json({ ok: false, error: { code: 'BAD_PAYLOAD' } });
+  }
+
+  // Replay protection: reject stale deliveries and duplicate update ids.
+  const requestDate = update.request_date ? Date.parse(update.request_date) : Date.now();
+  const ageSeconds = (Date.now() - requestDate) / 1000;
+  if (Number.isFinite(ageSeconds) && ageSeconds > config.cryptobot.webhookMaxAgeSeconds) {
+    return res.status(202).json({ ok: true, ignored: 'stale' });
+  }
+
+  const dedupeKey = `cryptobot:${update.update_id}`;
+  if (db.seenWebhook(dedupeKey)) return res.json({ ok: true, duplicate: true });
+  db.markWebhook(dedupeKey);
+
+  if (update.update_type !== 'invoice_paid') {
+    return res.json({ ok: true, ignored: update.update_type });
+  }
+
+  const payloadInvoice = update.payload || {};
+  const stored = db.getInvoice(payloadInvoice.invoice_id);
+
+  let meta = {};
+  try {
+    meta = payloadInvoice.payload ? JSON.parse(payloadInvoice.payload) : {};
+  } catch {
+    meta = {};
+  }
+
+  const userId = stored?.userId || meta.userId;
+  if (!userId) return res.status(202).json({ ok: true, ignored: 'unknown_invoice' });
+
+  const network = (stored?.network || meta.network || '').toUpperCase();
+  const asset = payloadInvoice.asset || stored?.asset || 'USDT';
+  const amount = payloadInvoice.amount || stored?.amount || '0';
+
+  if (stored) {
+    if (stored.status === 'paid') return res.json({ ok: true, duplicate: true });
+    stored.status = 'paid';
+    stored.paidAt = payloadInvoice.paid_at ? Date.parse(payloadInvoice.paid_at) : Date.now();
+    stored.txHash = payloadInvoice.hash || stored.hash;
+    db.saveInvoice(stored);
+  }
+
+  activateSubscription({
+    userId,
+    paymentMethod: `CRYPTO:${asset}:${network || 'AUTO'}`,
+    transactionId: String(payloadInvoice.invoice_id || stored?.invoiceId || ''),
+    amount: `${amount} ${asset}`,
+    meta: {
+      source: 'webhook',
+      network,
+      networkTitle: NETWORKS[network]?.title || network || null,
+      explorer: NETWORKS[network]?.explorer || null,
+    },
+  });
+
+  return res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------- YooKassa -- */
+
+webhooksRouter.post('/webhooks/yookassa', (req, res) => {
+  if (config.yookassa.verifyNetwork && !config.mockProviders) {
+    const remote =
+      (req.get('x-forwarded-for') || '').split(',')[0].trim() || req.socket?.remoteAddress || '';
+    if (!isTrustedYooKassaIp(remote)) {
+      return res.status(401).json({ ok: false, error: { code: 'UNTRUSTED_SOURCE' } });
+    }
+  }
+
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''), 'utf8');
+  const notification = parseJson(raw);
+  const object = notification?.object;
+  if (!notification?.event || !object?.id) {
+    return res.status(400).json({ ok: false, error: { code: 'BAD_PAYLOAD' } });
+  }
+
+  const dedupeKey = `yookassa:${notification.event}:${object.id}`;
+  if (db.seenWebhook(dedupeKey)) return res.json({ ok: true, duplicate: true });
+  db.markWebhook(dedupeKey);
+
+  const stored = db.getPayment(object.id);
+  const userId = stored?.userId || object.metadata?.userId;
+  if (!userId) return res.status(202).json({ ok: true, ignored: 'unknown_payment' });
+
+  if (stored) {
+    stored.status = object.status;
+    db.savePayment(stored);
+  }
+
+  switch (notification.event) {
+    case 'payment.succeeded': {
+      const wantsSave = stored ? stored.saveCard : object.metadata?.saveCard === 'true';
+      const card = wantsSave ? upsertCardFromPaymentMethod(userId, object.payment_method) : null;
+      activateSubscription({
+        userId,
+        paymentMethod: stored?.kind === 'recurring' ? 'CARD_RECURRING' : 'CARD',
+        transactionId: object.id,
+        amount: `${object.amount?.value ?? config.subscription.priceRub} ${object.amount?.currency ?? 'RUB'}`,
+        autoRenew: Boolean(card),
+        cardId: card?.cardId || getSubscription(userId).cardId || null,
+        meta: { source: 'webhook', brand: card?.brand, last4: card?.last4 },
+      });
+      break;
+    }
+    case 'payment.canceled':
+    case 'payment.waiting_for_capture':
+    case 'refund.succeeded':
+    default:
+      break;
+  }
+
+  return res.json({ ok: true });
+});

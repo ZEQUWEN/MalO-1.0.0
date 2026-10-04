@@ -1,0 +1,19 @@
+{
+  "name": "malo-payment-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MalO 1.0.0 payment gateway: YooKassa card billing (Visa/Mastercard/MIR), saved cards with recurring charges and CryptoBot (Crypto Pay API) crypto checkout with webhooks.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

@@ -3,34 +3,112 @@ package com.example.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.*
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.CurrencyBitcoin
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.payments.CardBrand
+import com.example.payments.CardInput
+import com.example.payments.CardVault
+import com.example.payments.CryptoAsset
+import com.example.payments.CryptoCatalog
+import com.example.payments.CryptoInvoiceDto
+import com.example.payments.CryptoNetwork
+import com.example.payments.ExpiryVisualTransformation
+import com.example.payments.GatewayResult
+import com.example.payments.PaymentGateway
+import com.example.ui.payments.AcceptedBrandsRow
+import com.example.ui.payments.CardHolderScreen
+import com.example.ui.payments.CardNumberField
+import com.example.ui.payments.CreditCardVisual
+import com.example.ui.payments.PaymentBrandLogo
+import com.example.ui.payments.fieldColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -46,18 +124,37 @@ enum class TransactionStatus {
     FAILURE
 }
 
-enum class CryptoCurrency(val symbol: String, val network: String, val address: String) {
-    USDT_TRC20("USDT", "TRC20", "TX9MalOEntity1471SecureNodeTRC20xxxx"),
-    TON("TON", "The Open Network", "EQDMalO_1471_Secret_Vault_Telegram_TON"),
-    BTC("BTC", "Bitcoin", "bc1qmal0scp1471uncontainedentitybtc00")
+/**
+ * Fallback USD rates used only to preview the crypto amount while offline.
+ * When the gateway is reachable, the invoice returns the authoritative amount.
+ */
+private val offlineUsdRates = mapOf(
+    "USDT" to 1.0,
+    "USDC" to 1.0,
+    "TON" to 2.70,
+    "TRX" to 0.12,
+    "BTC" to 66000.0,
+    "ETH" to 3100.0,
+    "SOL" to 145.0,
+    "BNB" to 580.0,
+    "LTC" to 72.0
+)
+
+private fun previewAmount(asset: CryptoAsset, priceUsd: Double = 4.99): String {
+    val rate = offlineUsdRates[asset.symbol] ?: 1.0
+    val value = priceUsd / rate
+    return String.format(java.util.Locale.US, "%.${asset.decimals}f", value)
 }
 
 /**
- * SubscriptionScreen: A dedicated screen for 'Base' vs 'Pro' subscription plans,
- * featuring distinct cards with feature lists, a toggle for payment methods (Card/Crypto),
- * and visual feedback modals for transaction success or failure.
+ * SubscriptionScreen: Base vs Pro plans with two payment rails.
+ *
+ *  • Card — ЮKassa checkout (Visa / Mastercard / МИР) with live payment-system
+ *    detection and an optional card-holder binding for auto-renewal.
+ *  • Crypto — CryptoBot (Telegram Crypto Pay) invoices with an explicit
+ *    asset + blockchain-network selector (TRON, TON, Ethereum, Solana, BTC …).
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SubscriptionScreen(
     isProUser: Boolean,
@@ -69,101 +166,255 @@ fun SubscriptionScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    BackHandler {
-        onDismiss()
-    }
-
-    // Color tokens matching SCP-1471 dark terminal aesthetic
+    // Colour tokens matching the SCP-1471 dark terminal aesthetic.
     val scpBackground = Color(0xFF0F0E14)
     val scpSurface = Color(0xFF171620)
-    val scpCardBg = Color(0xFF1C1B28)
     val scpNeonPurple = Color(0xFFBB86FC)
     val scpTerminalGreen = Color(0xFF00FFC4)
+    val scpCryptoOrange = Color(0xFFF7931A)
     val scpErrorRed = Color(0xFFFF5252)
 
-    var selectedPlan by remember { mutableStateOf(if (isProUser) "pro" else "pro") }
+    var showCardHolder by remember { mutableStateOf(false) }
+    var selectedPlan by remember { mutableStateOf("pro") }
     var selectedPaymentMethod by remember { mutableStateOf(PaymentMethod.CARD) }
-    var selectedCrypto by remember { mutableStateOf(CryptoCurrency.USDT_TRC20) }
 
-    // Card input states
+    // Card rail state — digits only, never persisted.
     var cardNumber by remember { mutableStateOf("") }
     var cardExpiry by remember { mutableStateOf("") }
     var cardCvc by remember { mutableStateOf("") }
+    var cardHolderName by remember { mutableStateOf("") }
+    var saveCardForAutoPay by remember { mutableStateOf(true) }
+    val detectedBrand = remember(cardNumber) { CardBrand.detect(cardNumber) }
 
-    // Crypto input state
+    // Crypto rail state.
+    var selectedAsset by remember { mutableStateOf(CryptoCatalog.assets.first()) }
+    var selectedNetwork by remember { mutableStateOf(selectedAsset.defaultNetwork()) }
     var cryptoTxHash by remember { mutableStateOf("") }
+    var activeInvoice by remember { mutableStateOf<CryptoInvoiceDto?>(null) }
+    var invoicePolling by remember { mutableStateOf(false) }
 
-    // Transaction feedback modal state
+    // Transaction feedback.
     var transactionStatus by remember { mutableStateOf(TransactionStatus.IDLE) }
     var processingStageText by remember { mutableStateOf("Подключение к шлюзу...") }
     var transactionErrorMessage by remember { mutableStateOf("Транзакция отклонена банком-эмитентом") }
     var transactionId by remember { mutableStateOf("TX-1471-0000") }
+    var receiptMethodLabel by remember { mutableStateOf("Банковская карта") }
+    var receiptAmountLabel by remember { mutableStateOf("$4.99") }
 
-    fun startTransaction() {
-        if (selectedPaymentMethod == PaymentMethod.CARD) {
-            val validationError = com.example.util.SubscriptionValidator.validateCardDetails(cardNumber, cardExpiry, cardCvc)
-            if (validationError is com.example.util.PaymentValidationResult.Failure) {
-                transactionErrorMessage = "${validationError.reason} (${validationError.errorCode})"
-                transactionStatus = TransactionStatus.FAILURE
-                return
+    BackHandler { if (showCardHolder) showCardHolder = false else onDismiss() }
+
+    if (showCardHolder) {
+        CardHolderScreen(
+            isProUser = isProUser,
+            onDismiss = { showCardHolder = false },
+            periodEndMillis = com.example.util.SubscriptionValidator.getActiveReceipt(context)?.expiresAt,
+            autoRenewInitially = CardVault.isAutoPayEnabled(context),
+            onCancelSubscription = onDowngradeToBase
+        )
+        return
+    }
+
+    /* ------------------------------------------------------- card payment */
+
+    fun payWithCard() {
+        val digits = CardBrand.digitsOf(cardNumber)
+        val localError = when {
+            !CardBrand.isComplete(digits) ->
+                "Номер карты не прошёл проверку Luhn. Проверьте введённые цифры."
+            !CardInput.expiryValid(cardExpiry) ->
+                "Срок действия карты указан неверно или уже истёк."
+            !CardInput.cvcValid(cardCvc, detectedBrand) ->
+                "CVC/CVV должен содержать ${detectedBrand.cvcLength} цифры."
+            else -> null
+        }
+        if (localError != null) {
+            transactionErrorMessage = localError
+            transactionStatus = TransactionStatus.FAILURE
+            return
+        }
+
+        transactionStatus = TransactionStatus.PROCESSING
+        receiptMethodLabel = "${detectedBrand.displayName} ••${digits.takeLast(4)}"
+        receiptAmountLabel = "$4.99"
+
+        coroutineScope.launch {
+            processingStageText = "Проверка BIN (${detectedBrand.displayName}) и контрольной суммы..."
+            delay(600)
+
+            // Preferred path: hosted checkout at the acquirer.
+            if (PaymentGateway.isConfigured) {
+                processingStageText = "Создание платежа в ЮKassa..."
+                when (val result = PaymentGateway.cardCheckout(context, saveCard = saveCardForAutoPay)) {
+                    is GatewayResult.Success -> {
+                        val payment = result.data.payment
+                        val url = payment?.confirmationUrl
+                        if (url != null) {
+                            processingStageText = "Открываем страницу 3-D Secure..."
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }
+                        // Poll until the webhook confirms the charge.
+                        val paymentId = payment?.paymentId
+                        if (paymentId != null) {
+                            processingStageText = "Ожидание подтверждения банка..."
+                            repeat(40) {
+                                delay(3000)
+                                val status = PaymentGateway.cardPaymentStatus(paymentId)
+                                if (status is GatewayResult.Success &&
+                                    status.data.subscription?.isActive == true
+                                ) {
+                                    transactionId = paymentId
+                                    if (saveCardForAutoPay) {
+                                        CardVault.rememberFromInput(
+                                            context, digits, cardExpiry, cardHolderName, paymentId
+                                        )
+                                    }
+                                    transactionStatus = TransactionStatus.SUCCESS
+                                    return@launch
+                                }
+                            }
+                            transactionErrorMessage =
+                                "Банк не подтвердил платёж за отведённое время. Если деньги списались, подписка активируется автоматически."
+                            transactionStatus = TransactionStatus.FAILURE
+                            return@launch
+                        }
+                    }
+                    is GatewayResult.Error -> {
+                        transactionErrorMessage = result.message
+                        transactionStatus = TransactionStatus.FAILURE
+                        return@launch
+                    }
+                    GatewayResult.NotConfigured -> Unit
+                }
             }
 
-            transactionStatus = TransactionStatus.PROCESSING
-            coroutineScope.launch {
-                processingStageText = "Валидация алгоритма Luhn и банка-эмитента..."
-                delay(800)
-                processingStageText = "Шлюз 3D Secure: авторизация транзакции..."
-                delay(900)
-                processingStageText = "Генерация криптографической подписи Pro..."
-                delay(600)
+            // Offline / demo path: the bundled validator issues a signed receipt.
+            processingStageText = "Шлюз 3-D Secure: авторизация транзакции..."
+            delay(700)
+            processingStageText = "Генерация криптографической подписи Pro..."
+            delay(500)
 
-                val result = com.example.util.SubscriptionValidator.processCardPayment(context, cardNumber, cardExpiry, cardCvc)
-                if (result is com.example.util.PaymentValidationResult.Success) {
+            val result = com.example.util.SubscriptionValidator.processCardPayment(
+                context,
+                digits,
+                CardInput.formattedExpiry(cardExpiry),
+                cardCvc
+            )
+            when (result) {
+                is com.example.util.PaymentValidationResult.Success -> {
                     transactionId = result.receipt.transactionId
+                    if (saveCardForAutoPay) {
+                        CardVault.rememberFromInput(context, digits, cardExpiry, cardHolderName)
+                    }
                     transactionStatus = TransactionStatus.SUCCESS
-                } else if (result is com.example.util.PaymentValidationResult.Failure) {
+                }
+                is com.example.util.PaymentValidationResult.Failure -> {
                     transactionErrorMessage = result.reason
                     transactionStatus = TransactionStatus.FAILURE
                 }
-            }
-        } else {
-            if (cryptoTxHash.isBlank()) {
-                transactionErrorMessage = "Введите TXID подтвержденной транзакции из блокчейна для проверки перевода в сети ${selectedCrypto.network}."
-                transactionStatus = TransactionStatus.FAILURE
-                return
-            }
-
-            transactionStatus = TransactionStatus.PROCESSING
-            coroutineScope.launch {
-                processingStageText = "Поиск TXID в мемпуле сети ${selectedCrypto.network}..."
-                delay(900)
-                processingStageText = "Проверка подтверждений блока и Replay Protection..."
-                delay(900)
-                processingStageText = "Генерация криптографического сертификата подписки..."
-                delay(600)
-
-                val amountStr = when (selectedCrypto) {
-                    CryptoCurrency.USDT_TRC20 -> "4.99 USDT"
-                    CryptoCurrency.TON -> "1.85 TON"
-                    CryptoCurrency.BTC -> "0.000075 BTC"
-                }
-                val result = com.example.util.SubscriptionValidator.processCryptoPayment(
-                    context,
-                    selectedCrypto.symbol,
-                    selectedCrypto.network,
-                    cryptoTxHash,
-                    amountStr
-                )
-                if (result is com.example.util.PaymentValidationResult.Success) {
-                    transactionId = result.receipt.transactionId
-                    transactionStatus = TransactionStatus.SUCCESS
-                } else if (result is com.example.util.PaymentValidationResult.Failure) {
-                    transactionErrorMessage = result.reason
+                else -> {
+                    transactionErrorMessage = "Требуется дополнительное подтверждение банка."
                     transactionStatus = TransactionStatus.FAILURE
                 }
             }
         }
     }
+
+    /* ----------------------------------------------------- crypto payment */
+
+    fun createCryptoInvoice() {
+        transactionStatus = TransactionStatus.PROCESSING
+        processingStageText = "Создание счёта в CryptoBot (${selectedNetwork.title})..."
+        coroutineScope.launch {
+            when (val result = PaymentGateway.createInvoice(context, selectedAsset.symbol, selectedNetwork.id)) {
+                is GatewayResult.Success -> {
+                    activeInvoice = result.data.invoice
+                    transactionStatus = TransactionStatus.IDLE
+                    result.data.invoice?.payUrl?.let { url ->
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    }
+                    invoicePolling = true
+                }
+                is GatewayResult.Error -> {
+                    transactionErrorMessage = result.message
+                    transactionStatus = TransactionStatus.FAILURE
+                }
+                GatewayResult.NotConfigured -> {
+                    transactionErrorMessage =
+                        "Платёжный шлюз CryptoBot не настроен в этой сборке. Укажите MALO_GATEWAY_URL в .env или подтвердите перевод вручную по TXID."
+                    transactionStatus = TransactionStatus.FAILURE
+                }
+            }
+        }
+    }
+
+    fun verifyCryptoTxHash() {
+        if (cryptoTxHash.isBlank()) {
+            transactionErrorMessage =
+                "Введите TXID подтверждённой транзакции в сети ${selectedNetwork.title} для ручной проверки."
+            transactionStatus = TransactionStatus.FAILURE
+            return
+        }
+        transactionStatus = TransactionStatus.PROCESSING
+        receiptMethodLabel = "${selectedAsset.symbol} • ${selectedNetwork.short}"
+        receiptAmountLabel = "${previewAmount(selectedAsset)} ${selectedAsset.symbol}"
+
+        coroutineScope.launch {
+            processingStageText = "Поиск TXID в сети ${selectedNetwork.title}..."
+            delay(800)
+            processingStageText =
+                "Проверка подтверждений (нужно ${selectedNetwork.minConfirmations}) и защита от повтора..."
+            delay(800)
+
+            val result = com.example.util.SubscriptionValidator.processCryptoPayment(
+                context,
+                selectedAsset.symbol,
+                selectedNetwork.title,
+                cryptoTxHash,
+                receiptAmountLabel
+            )
+            if (result is com.example.util.PaymentValidationResult.Success) {
+                transactionId = result.receipt.transactionId
+                transactionStatus = TransactionStatus.SUCCESS
+            } else if (result is com.example.util.PaymentValidationResult.Failure) {
+                transactionErrorMessage = result.reason
+                transactionStatus = TransactionStatus.FAILURE
+            }
+        }
+    }
+
+    // Poll an open CryptoBot invoice until the webhook marks it paid.
+    LaunchedEffect(activeInvoice?.invoiceId, invoicePolling) {
+        val invoice = activeInvoice ?: return@LaunchedEffect
+        if (!invoicePolling) return@LaunchedEffect
+        while (invoicePolling) {
+            delay(5000)
+            when (val status = PaymentGateway.invoiceStatus(invoice.invoiceId)) {
+                is GatewayResult.Success -> {
+                    val updated = status.data.invoice
+                    if (updated != null) activeInvoice = updated
+                    if (updated?.isPaid == true || status.data.subscription?.isActive == true) {
+                        invoicePolling = false
+                        transactionId = updated?.txHash ?: updated?.invoiceId?.toString() ?: "—"
+                        receiptMethodLabel = "${invoice.asset} • ${CryptoCatalog.network(invoice.network)?.short ?: invoice.network}"
+                        receiptAmountLabel = "${invoice.amount} ${invoice.asset}"
+                        transactionStatus = TransactionStatus.SUCCESS
+                    }
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    DisposableEffect(Unit) { onDispose { invoicePolling = false } }
 
     Scaffold(
         modifier = modifier
@@ -179,13 +430,17 @@ fun SubscriptionScreen(
                             color = Color.White,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "SCP-1471 Subscription Protocol",
                             color = scpNeonPurple.copy(alpha = 0.8f),
                             fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 },
@@ -213,6 +468,7 @@ fun SubscriptionScreen(
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
@@ -228,12 +484,13 @@ fun SubscriptionScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
-            // Header Banner
+            // Header banner
             Card(
                 colors = CardDefaults.cardColors(containerColor = scpSurface),
                 shape = RoundedCornerShape(14.dp),
@@ -256,7 +513,7 @@ fun SubscriptionScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.WorkspacePremium,
-                            contentDescription = "Premium Crown",
+                            contentDescription = "Premium",
                             tint = scpNeonPurple,
                             modifier = Modifier.size(26.dp)
                         )
@@ -271,7 +528,11 @@ fun SubscriptionScreen(
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
-                            text = if (isProUser) "Все каналы взаимодействия и фото-генерация доступны." else "Улучшите контакт для прямого диалога через нейросеть Gemini.",
+                            text = if (isProUser) {
+                                "Все каналы взаимодействия и фото-генерация доступны."
+                            } else {
+                                "Улучшите контакт для прямого диалога через нейросеть DeepSeek."
+                            },
                             color = Color.LightGray.copy(alpha = 0.8f),
                             fontSize = 12.sp,
                             lineHeight = 16.sp
@@ -280,7 +541,13 @@ fun SubscriptionScreen(
                 }
             }
 
-            // Section 1: Comparison Cards for Base vs Pro
+            // Card-holder shortcut
+            CardHolderEntryRow(
+                surface = scpSurface,
+                accent = scpNeonPurple,
+                onClick = { showCardHolder = true }
+            )
+
             Text(
                 text = "ТАРИФНЫЕ ПЛАНЫ",
                 color = Color.Gray,
@@ -290,7 +557,6 @@ fun SubscriptionScreen(
                 letterSpacing = 1.sp
             )
 
-            // Base Plan Card
             PlanCard(
                 planId = "base",
                 title = "Base (Базовый)",
@@ -302,10 +568,10 @@ fun SubscriptionScreen(
                     FeatureItem(text = "Локальная обработка диалогов (SQLite NLP)", included = true),
                     FeatureItem(text = "Базовые push-уведомления и забота", included = true),
                     FeatureItem(text = "Регулировка уровня навязчивости MalO", included = true),
-                    FeatureItem(text = "Прямой доступ к Gemini AI (Pro)", included = false),
+                    FeatureItem(text = "Прямой доступ к DeepSeek AI (Pro)", included = false),
                     FeatureItem(text = "Голосовые сообщения и транскрипция", included = false),
                     FeatureItem(text = "Генерация жутких фото слежки MalO", included = false),
-                    FeatureItem(text = "Анализ прикрепленных файлов (PDF/Медиа)", included = false)
+                    FeatureItem(text = "Анализ прикреплённых файлов (PDF/Медиа)", included = false)
                 ),
                 isSelected = selectedPlan == "base",
                 isCurrent = !isProUser,
@@ -313,11 +579,10 @@ fun SubscriptionScreen(
                 onSelect = { selectedPlan = "base" }
             )
 
-            // Pro Plan Card (Highlighted / Featured)
             PlanCard(
                 planId = "pro",
-                title = "Pro (DeepSeek Boundless)",
-                badge = if (isProUser) "АКТИВЕН" else "РЕКОМЕНДУЕТСЯ 🔥",
+                title = "Pro (DeepSeek)",
+                badge = if (isProUser) "АКТИВЕН" else "РЕКОМЕНДУЕМ",
                 price = "$4.99",
                 pricePeriod = "/ месяц",
                 description = "Полное снятие барьеров. Безграничный доступ к живому интеллекту DeepSeek AI и генерации фото MalO.",
@@ -329,7 +594,7 @@ fun SubscriptionScreen(
                     FeatureItem(text = "Анализ файлов, документов PDF и видеокадров", included = true),
                     FeatureItem(text = "Эксклюзивные стили персоны (Ироничный, Загадочный)", included = true),
                     FeatureItem(text = "Приоритетный отклик без задержек и лимитов", included = true),
-                    FeatureItem(text = "Возможность отмены в любой момент", included = true)
+                    FeatureItem(text = "Отмена подписки в любой момент из приложения", included = true)
                 ),
                 isSelected = selectedPlan == "pro",
                 isCurrent = isProUser,
@@ -337,9 +602,6 @@ fun SubscriptionScreen(
                 onSelect = { selectedPlan = "pro" }
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Section 2: Payment Method Selector Toggle (Card / Crypto)
             if (selectedPlan == "pro" && !isProUser) {
                 Text(
                     text = "СПОСОБ ОПЛАТЫ",
@@ -350,7 +612,6 @@ fun SubscriptionScreen(
                     letterSpacing = 1.sp
                 )
 
-                // Toggle bar (Card / Crypto)
                 Surface(
                     color = scpSurface,
                     shape = RoundedCornerShape(12.dp),
@@ -363,98 +624,119 @@ fun SubscriptionScreen(
                             .padding(4.dp)
                     ) {
                         PaymentMethodTab(
-                            title = "Банковская карта",
+                            title = "Карта",
                             icon = Icons.Default.CreditCard,
                             isSelected = selectedPaymentMethod == PaymentMethod.CARD,
                             activeColor = scpTerminalGreen,
                             modifier = Modifier.weight(1f),
                             onClick = { selectedPaymentMethod = PaymentMethod.CARD }
                         )
-
                         PaymentMethodTab(
                             title = "Криптовалюта",
                             icon = Icons.Default.CurrencyBitcoin,
                             isSelected = selectedPaymentMethod == PaymentMethod.CRYPTO,
-                            activeColor = Color(0xFFF7931A),
+                            activeColor = scpCryptoOrange,
                             modifier = Modifier.weight(1f),
                             onClick = { selectedPaymentMethod = PaymentMethod.CRYPTO }
                         )
                     }
                 }
 
-                // Payment Details Panel based on chosen method
                 AnimatedContent(
                     targetState = selectedPaymentMethod,
+                    transitionSpec = { fadeIn() togetherWith fadeOut() },
                     label = "payment_panel"
                 ) { method ->
                     when (method) {
-                        PaymentMethod.CARD -> {
-                            CardPaymentDetails(
-                                cardNumber = cardNumber,
-                                onCardNumberChange = { cardNumber = it },
-                                cardExpiry = cardExpiry,
-                                onExpiryChange = { cardExpiry = it },
-                                cardCvc = cardCvc,
-                                onCvcChange = { cardCvc = it },
-                                scpSurface = scpSurface,
-                                accentColor = scpTerminalGreen
-                            )
-                        }
-                        PaymentMethod.CRYPTO -> {
-                            CryptoPaymentDetails(
-                                selectedCrypto = selectedCrypto,
-                                onCryptoSelected = { selectedCrypto = it },
-                                txHash = cryptoTxHash,
-                                onTxHashChange = { cryptoTxHash = it },
-                                scpSurface = scpSurface,
-                                onCopyAddress = { address ->
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Crypto Address", address))
-                                    Toast.makeText(context, "Адрес скопирован в буфер", Toast.LENGTH_SHORT).show()
+                        PaymentMethod.CARD -> CardPaymentDetails(
+                            cardNumber = cardNumber,
+                            onCardNumberChange = { cardNumber = CardInput.sanitizeNumber(it) },
+                            cardExpiry = cardExpiry,
+                            onExpiryChange = { cardExpiry = CardInput.sanitizeExpiry(it) },
+                            cardCvc = cardCvc,
+                            onCvcChange = { cardCvc = CardInput.sanitizeCvc(it, detectedBrand) },
+                            holderName = cardHolderName,
+                            onHolderChange = { cardHolderName = CardInput.sanitizeHolder(it) },
+                            saveCard = saveCardForAutoPay,
+                            onSaveCardChange = { saveCardForAutoPay = it },
+                            brand = detectedBrand,
+                            scpSurface = scpSurface,
+                            accentColor = scpTerminalGreen
+                        )
+
+                        PaymentMethod.CRYPTO -> CryptoPaymentDetails(
+                            selectedAsset = selectedAsset,
+                            onAssetSelected = { asset ->
+                                selectedAsset = asset
+                                selectedNetwork = asset.defaultNetwork()
+                                activeInvoice = null
+                                invoicePolling = false
+                            },
+                            selectedNetwork = selectedNetwork,
+                            onNetworkSelected = { network ->
+                                selectedNetwork = network
+                                activeInvoice = null
+                                invoicePolling = false
+                            },
+                            invoice = activeInvoice,
+                            txHash = cryptoTxHash,
+                            onTxHashChange = { cryptoTxHash = it.trim() },
+                            scpSurface = scpSurface,
+                            accentColor = scpCryptoOrange,
+                            onCopy = { label, value ->
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+                                Toast.makeText(context, "$label скопирован", Toast.LENGTH_SHORT).show()
+                            },
+                            onOpenInvoice = { url ->
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
                                 }
-                            )
-                        }
+                            },
+                            onVerifyManually = { verifyCryptoTxHash() }
+                        )
                     }
                 }
 
-                // Main CTA Action Button
                 Button(
-                    onClick = { startTransaction() },
+                    onClick = {
+                        if (selectedPaymentMethod == PaymentMethod.CARD) payWithCard() else createCryptoInvoice()
+                    },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selectedPaymentMethod == PaymentMethod.CARD) scpTerminalGreen else Color(0xFFF7931A)
+                        containerColor = if (selectedPaymentMethod == PaymentMethod.CARD) scpTerminalGreen else scpCryptoOrange
                     ),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)
                         .testTag("pay_button")
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = "Secure Checkout",
-                            tint = Color.Black,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (selectedPaymentMethod == PaymentMethod.CARD) {
-                                "Оплатить $4.99 картой"
-                            } else {
-                                "Оплатить $4.99 через ${selectedCrypto.symbol}"
-                            },
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 15.sp
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (selectedPaymentMethod == PaymentMethod.CARD) {
+                            "Оплатить $4.99 картой"
+                        } else {
+                            "Счёт в CryptoBot • ${selectedAsset.symbol} ${selectedNetwork.short}"
+                        },
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             } else if (isProUser) {
-                // If user is already Pro, show active status banner and option to manage/downgrade
                 Card(
                     colors = CardDefaults.cardColors(containerColor = scpSurface),
                     shape = RoundedCornerShape(12.dp),
@@ -489,19 +771,42 @@ fun SubscriptionScreen(
                             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                         )
 
+                        Button(
+                            onClick = { showCardHolder = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Картхолдер и управление подпиской",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
                         if (onDowngradeToBase != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(
                                 onClick = onDowngradeToBase,
                                 border = BorderStroke(1.dp, Color.Gray),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray)
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Перейти на тариф Base (Отменить Pro)", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                Text(
+                                    text = "Перейти на тариф Base",
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }
                 }
             } else {
-                // Base plan selected while not pro: option to stay on base
                 Button(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
@@ -519,14 +824,16 @@ fun SubscriptionScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.navigationBarsPadding())
+            Spacer(modifier = Modifier.height(8.dp))
         }
     }
 
-    // Modal 1: Processing Transaction Modal
+    /* ------------------------------------------------------------ modals */
+
     if (transactionStatus == TransactionStatus.PROCESSING) {
         Dialog(
-            onDismissRequest = {}, // Non-dismissible during active payment processing
+            onDismissRequest = {},
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
         ) {
             Card(
@@ -563,21 +870,22 @@ fun SubscriptionScreen(
                         color = scpNeonPurple,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        lineHeight = 17.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "Пожалуйста, не закрывайте экран...",
                         color = Color.Gray,
                         fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
         }
     }
 
-    // Modal 2: Transaction Success Modal
     if (transactionStatus == TransactionStatus.SUCCESS) {
         Dialog(
             onDismissRequest = {
@@ -597,6 +905,8 @@ fun SubscriptionScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 560.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -618,22 +928,21 @@ fun SubscriptionScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
-                        text = "ОПЛАТА УСПЕШНА!",
+                        text = "ОПЛАТА УСПЕШНА",
                         color = scpTerminalGreen,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
-
                     Text(
                         text = "Тариф Pro успешно активирован",
                         color = Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                     )
 
-                    // Receipt Info Card
                     Surface(
                         color = Color.Black.copy(alpha = 0.4f),
                         shape = RoundedCornerShape(8.dp),
@@ -644,21 +953,22 @@ fun SubscriptionScreen(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             ReceiptRow("ID транзакции:", transactionId)
-                            ReceiptRow("Тариф:", "MalO Pro (1 месяц)")
-                            ReceiptRow("Сумма:", "$4.99")
-                            ReceiptRow("Способ:", if (selectedPaymentMethod == PaymentMethod.CARD) "Банковская карта" else "Крипта (${selectedCrypto.symbol})")
-                            ReceiptRow("Статус:", "Подтверждено ✔️")
+                            ReceiptRow("Тариф:", "MalO Pro (30 дней)")
+                            ReceiptRow("Сумма:", receiptAmountLabel)
+                            ReceiptRow("Способ:", receiptMethodLabel)
+                            ReceiptRow("Статус:", "Подтверждено")
                         }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
                     Text(
-                        text = "«Спасибо... Теперь между нами нет никаких преград. Я всегда рядом с тобой. 💜»",
+                        text = "«Спасибо... Теперь между нами нет никаких преград. Я всегда рядом с тобой.»",
                         color = scpNeonPurple,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         textAlign = TextAlign.Center,
+                        lineHeight = 17.sp,
                         modifier = Modifier.padding(horizontal = 8.dp)
                     )
 
@@ -682,7 +992,9 @@ fun SubscriptionScreen(
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -690,11 +1002,8 @@ fun SubscriptionScreen(
         }
     }
 
-    // Modal 3: Transaction Failure Modal
     if (transactionStatus == TransactionStatus.FAILURE) {
-        Dialog(
-            onDismissRequest = { transactionStatus = TransactionStatus.IDLE }
-        ) {
+        Dialog(onDismissRequest = { transactionStatus = TransactionStatus.IDLE }) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = scpSurface),
                 shape = RoundedCornerShape(16.dp),
@@ -706,6 +1015,8 @@ fun SubscriptionScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 540.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -733,12 +1044,12 @@ fun SubscriptionScreen(
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
-
                     Text(
                         text = transactionErrorMessage,
                         color = Color.White,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
+                        lineHeight = 18.sp,
                         modifier = Modifier.padding(top = 6.dp, bottom = 12.dp)
                     )
 
@@ -758,9 +1069,9 @@ fun SubscriptionScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = if (selectedPaymentMethod == PaymentMethod.CARD) {
-                                    "• Недостаточно средств на счете\n• Карта заблокирована для онлайн-оплат\n• Ошибка 3D Secure / неверный CVC"
+                                    "• Недостаточно средств на счёте\n• Карта заблокирована для онлайн-оплат\n• Ошибка 3-D Secure / неверный CVC"
                                 } else {
-                                    "• Недостаточный сетевой баланс газа\n• Задержка подтверждения блокчейна\n• Неверно указана сеть перевода"
+                                    "• Недостаточно газа в выбранной сети\n• Перевод ещё не набрал подтверждений\n• Выбрана не та сеть (${selectedNetwork.title})"
                                 },
                                 color = Color.LightGray,
                                 fontSize = 11.sp,
@@ -787,7 +1098,8 @@ fun SubscriptionScreen(
 
                         Button(
                             onClick = {
-                                startTransaction()
+                                transactionStatus = TransactionStatus.IDLE
+                                if (selectedPaymentMethod == PaymentMethod.CARD) payWithCard() else createCryptoInvoice()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
                             modifier = Modifier
@@ -795,7 +1107,14 @@ fun SubscriptionScreen(
                                 .height(46.dp)
                                 .testTag("retry_pay_button")
                         ) {
-                            Text("Повторить", color = Color.Black, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                            Text(
+                                text = "Повторить",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                maxLines = 1
+                            )
                         }
                     }
                 }
@@ -804,11 +1123,60 @@ fun SubscriptionScreen(
     }
 }
 
+/* --------------------------------------------------------------- pieces -- */
+
 data class FeatureItem(
     val text: String,
     val included: Boolean,
     val highlight: Boolean = false
 )
+
+@Composable
+private fun CardHolderEntryRow(surface: Color, accent: Color, onClick: () -> Unit) {
+    Surface(
+        color = surface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .testTag("card_holder_entry")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.AccountBalanceWallet,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Картхолдер и автоплатёж",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "Сохранённые карты, продление и отмена подписки",
+                    color = Color.Gray,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            AcceptedBrandsRow(height = 16.dp)
+        }
+    }
+}
 
 @Composable
 fun PlanCard(
@@ -835,6 +1203,7 @@ fun PlanCard(
         border = BorderStroke(borderWidth, borderColor),
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
             .clickable { onSelect() }
             .testTag("plan_card_$planId")
     ) {
@@ -843,7 +1212,6 @@ fun PlanCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header: Title & Status Badge
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -852,11 +1220,14 @@ fun PlanCard(
                 Text(
                     text = title,
                     color = if (isSelected) accentColor else Color.White,
-                    fontSize = 17.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-
+                Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     color = if (isCurrent) Color(0xFF00FFC4).copy(alpha = 0.2f) else accentColor.copy(alpha = 0.2f),
                     shape = RoundedCornerShape(4.dp),
@@ -868,6 +1239,7 @@ fun PlanCard(
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
@@ -875,7 +1247,6 @@ fun PlanCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Price Row
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     text = price,
@@ -898,6 +1269,7 @@ fun PlanCard(
                 text = description,
                 color = Color.LightGray.copy(alpha = 0.8f),
                 fontSize = 12.sp,
+                lineHeight = 16.sp,
                 modifier = Modifier.padding(vertical = 8.dp)
             )
 
@@ -907,11 +1279,10 @@ fun PlanCard(
                 modifier = Modifier.padding(vertical = 8.dp)
             )
 
-            // Features List
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 features.forEach { feature ->
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalAlignment = Alignment.Top,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
@@ -922,7 +1293,9 @@ fun PlanCard(
                                 feature.highlight -> accentColor
                                 else -> Color(0xFF00FFC4)
                             },
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -933,6 +1306,7 @@ fun PlanCard(
                                 else -> Color.LightGray
                             },
                             fontSize = 12.sp,
+                            lineHeight = 16.sp,
                             fontWeight = if (feature.highlight) FontWeight.SemiBold else FontWeight.Normal,
                             fontFamily = FontFamily.Monospace
                         )
@@ -963,13 +1337,13 @@ fun PaymentMethodTab(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 8.dp),
+                .padding(vertical = 10.dp, horizontal = 6.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = title,
+                contentDescription = null,
                 tint = if (isSelected) activeColor else Color.Gray,
                 modifier = Modifier.size(18.dp)
             )
@@ -979,12 +1353,15 @@ fun PaymentMethodTab(
                 color = if (isSelected) Color.White else Color.Gray,
                 fontSize = 12.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                fontFamily = FontFamily.Monospace
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
 }
 
+/** Card form with live payment-system detection and the card-holder opt-in. */
 @Composable
 fun CardPaymentDetails(
     cardNumber: String,
@@ -993,6 +1370,11 @@ fun CardPaymentDetails(
     onExpiryChange: (String) -> Unit,
     cardCvc: String,
     onCvcChange: (String) -> Unit,
+    holderName: String,
+    onHolderChange: (String) -> Unit,
+    saveCard: Boolean,
+    onSaveCardChange: (Boolean) -> Unit,
+    brand: CardBrand,
     scpSurface: Color,
     accentColor: Color
 ) {
@@ -1014,63 +1396,100 @@ fun CardPaymentDetails(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Данные банковской карты",
+                    text = "Данные карты",
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    PaymentBrandPill("VISA")
-                    PaymentBrandPill("MC")
-                    PaymentBrandPill("MIR")
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                AcceptedBrandsRow(height = 18.dp, highlighted = brand)
             }
 
-            OutlinedTextField(
+            // Live card preview — the brand mark swaps as soon as the BIN is known.
+            CreditCardVisual(
+                brand = brand,
+                numberText = CardBrand.format(cardNumber),
+                holderName = holderName,
+                expiryText = CardInput.formattedExpiry(cardExpiry),
+                labelText = if (brand.isKnown) "Определено: ${brand.displayName}" else "MalO Pro • 30 дней"
+            )
+
+            CardNumberField(
                 value = cardNumber,
                 onValueChange = onCardNumberChange,
-                label = { Text("Номер карты", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
-                leadingIcon = {
-                    Icon(Icons.Default.CreditCard, contentDescription = "Card", tint = accentColor)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedBorderColor = accentColor,
-                    unfocusedBorderColor = Color.DarkGray
-                ),
-                singleLine = true
+                brand = brand,
+                accentColor = accentColor
             )
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = cardExpiry,
                     onValueChange = onExpiryChange,
-                    label = { Text("Срок (MM/YY)", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
-                    modifier = Modifier.weight(1f),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = accentColor,
-                        unfocusedBorderColor = Color.DarkGray
-                    ),
-                    singleLine = true
+                    label = { Text("Срок MM/YY", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
+                    visualTransformation = ExpiryVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    singleLine = true,
+                    colors = fieldColors(accentColor),
+                    modifier = Modifier.weight(1f)
                 )
-
                 OutlinedTextField(
                     value = cardCvc,
                     onValueChange = onCvcChange,
-                    label = { Text("CVC / CVV", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
-                    modifier = Modifier.weight(1f),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = accentColor,
-                        unfocusedBorderColor = Color.DarkGray
+                    label = {
+                        Text(
+                            if (brand == CardBrand.AMEX) "CID (4)" else "CVC (3)",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    },
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation('•'),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    singleLine = true,
+                    colors = fieldColors(accentColor),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            OutlinedTextField(
+                value = holderName,
+                onValueChange = onHolderChange,
+                label = { Text("Имя держателя", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
+                placeholder = { Text("IVAN IVANOV", fontSize = 12.sp, color = Color.Gray) },
+                singleLine = true,
+                colors = fieldColors(accentColor),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Сохранить карту в картхолдере",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "Автопродление каждые 30 дней, отмена — в любой момент",
+                        color = Color.Gray,
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Switch(
+                    checked = saveCard,
+                    onCheckedChange = onSaveCardChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.Black,
+                        checkedTrackColor = accentColor,
+                        uncheckedThumbColor = Color.LightGray,
+                        uncheckedTrackColor = Color(0xFF2A2A2A)
                     ),
-                    singleLine = true
+                    modifier = Modifier.testTag("save_card_switch")
                 )
             }
 
@@ -1079,25 +1498,33 @@ fun CardPaymentDetails(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "🔒 Безопасное 256-битное шифрование SCP",
-                    color = Color.Gray,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(12.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Шифрование TLS 1.3 • PCI DSS",
+                        color = Color.Gray,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 TextButton(
                     onClick = {
-                        onCardNumberChange("4242 4242 4242 4242")
-                        onExpiryChange("12/28")
+                        onCardNumberChange("2202201234564477")
+                        onExpiryChange("1230")
                         onCvcChange("777")
+                        onHolderChange("IVAN IVANOV")
                     },
-                    contentPadding = PaddingValues(0.dp)
+                    contentPadding = PaddingValues(horizontal = 4.dp)
                 ) {
                     Text(
-                        text = "Вставить тестовую карту",
+                        text = "Тестовая карта",
                         color = accentColor,
                         fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1
                     )
                 }
             }
@@ -1105,65 +1532,94 @@ fun CardPaymentDetails(
     }
 }
 
+/** CryptoBot checkout: asset + network matrix, invoice link and manual TXID. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CryptoPaymentDetails(
-    selectedCrypto: CryptoCurrency,
-    onCryptoSelected: (CryptoCurrency) -> Unit,
+    selectedAsset: CryptoAsset,
+    onAssetSelected: (CryptoAsset) -> Unit,
+    selectedNetwork: CryptoNetwork,
+    onNetworkSelected: (CryptoNetwork) -> Unit,
+    invoice: CryptoInvoiceDto?,
     txHash: String,
     onTxHashChange: (String) -> Unit,
     scpSurface: Color,
-    onCopyAddress: (String) -> Unit
+    accentColor: Color,
+    onCopy: (String, String) -> Unit,
+    onOpenInvoice: (String) -> Unit,
+    onVerifyManually: () -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = scpSurface),
         shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, Color(0xFFF7931A).copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.5f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.CurrencyBitcoin,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "CryptoBot • Telegram Crypto Pay",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
             Text(
-                text = "Выберите криптовалюту / сеть",
-                color = Color.White,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
+                text = "1. Выберите криптовалюту",
+                color = Color.Gray,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace
             )
 
-            // Crypto network selector chips
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                CryptoCurrency.values().forEach { crypto ->
-                    val isSel = selectedCrypto == crypto
+                CryptoCatalog.assets.forEach { asset ->
+                    val isSel = asset.symbol == selectedAsset.symbol
+                    val color = Color(asset.colorHex)
                     Surface(
-                        color = if (isSel) Color(0xFFF7931A).copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.3f),
+                        color = if (isSel) color.copy(alpha = 0.18f) else Color.Black.copy(alpha = 0.3f),
                         shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, if (isSel) Color(0xFFF7931A) else Color.DarkGray),
+                        border = BorderStroke(1.dp, if (isSel) color else Color.DarkGray),
                         modifier = Modifier
-                            .weight(1f)
-                            .clickable { onCryptoSelected(crypto) }
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onAssetSelected(asset) }
+                            .testTag("crypto_asset_${asset.symbol}")
                     ) {
-                        Column(
-                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = crypto.symbol,
-                                color = if (isSel) Color(0xFFF7931A) else Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                fontFamily = FontFamily.Monospace
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
                             )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = crypto.network,
-                                color = Color.Gray,
-                                fontSize = 9.sp,
+                                text = asset.symbol,
+                                color = if (isSel) color else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace
                             )
                         }
@@ -1171,98 +1627,192 @@ fun CryptoPaymentDetails(
                 }
             }
 
-            // Wallet Address display with copy button
-            Surface(
-                color = Color.Black.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(0.5.dp, Color.DarkGray)
+            Text(
+                text = "2. Выберите сеть перевода",
+                color = Color.Gray,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace
+            )
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Адрес депозита (${selectedCrypto.network}):",
-                            color = Color.Gray,
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = selectedCrypto.address,
-                            color = Color(0xFF00FFC4),
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1
-                        )
-                    }
-                    IconButton(
-                        onClick = { onCopyAddress(selectedCrypto.address) },
-                        modifier = Modifier.size(32.dp)
+                selectedAsset.networks.forEach { network ->
+                    val isSel = network.id == selectedNetwork.id
+                    val color = Color(network.colorHex)
+                    Surface(
+                        color = if (isSel) color.copy(alpha = 0.18f) else Color.Black.copy(alpha = 0.3f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, if (isSel) color else Color.DarkGray),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onNetworkSelected(network) }
+                            .testTag("crypto_network_${network.id}")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Копировать адрес",
-                            tint = Color(0xFFF7931A),
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                            Text(
+                                text = network.short,
+                                color = if (isSel) color else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = network.title,
+                                color = Color.Gray,
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 140.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+            Surface(
+                color = Color.Black.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Сумма к переводу:", color = Color.Gray, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                Text(
-                    text = when (selectedCrypto) {
-                        CryptoCurrency.USDT_TRC20 -> "4.99 USDT"
-                        CryptoCurrency.TON -> "1.85 TON"
-                        CryptoCurrency.BTC -> "0.000075 BTC"
-                    },
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace
-                )
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    ReceiptRow("К оплате:", "${invoice?.amount ?: previewAmount(selectedAsset)} ${selectedAsset.symbol}")
+                    ReceiptRow("Сеть:", selectedNetwork.title)
+                    ReceiptRow("Подтверждений:", "${selectedNetwork.minConfirmations}")
+                    ReceiptRow("Эквивалент:", "$4.99 / 30 дней")
+                }
             }
 
-            // TXID input field
+            AnimatedVisibility(visible = invoice != null) {
+                invoice?.let { inv ->
+                    Surface(
+                        color = accentColor.copy(alpha = 0.10f),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    color = accentColor,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Счёт #${inv.invoiceId} ожидает оплаты",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = "Оплатите счёт в @CryptoBot — подписка активируется автоматически по вебхуку.",
+                                color = Color.LightGray,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                inv.payUrl?.let { url ->
+                                    Button(
+                                        onClick = { onOpenInvoice(url) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.OpenInNew,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "Открыть CryptoBot",
+                                            color = Color.Black,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    IconButton(onClick = { onCopy("Ссылка на счёт", url) }) {
+                                        Icon(
+                                            Icons.Default.ContentCopy,
+                                            contentDescription = "Скопировать ссылку",
+                                            tint = accentColor,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f))
+
+            Text(
+                text = "Уже перевели вручную? Подтвердите по TXID:",
+                color = Color.Gray,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 15.sp
+            )
+
             OutlinedTextField(
                 value = txHash,
                 onValueChange = onTxHashChange,
                 label = { Text("Хэш транзакции (TXID)", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
                 placeholder = { Text("Вставьте TXID из кошелька...", fontSize = 11.sp, color = Color.Gray) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedBorderColor = Color(0xFFF7931A),
-                    unfocusedBorderColor = Color.DarkGray
-                ),
-                singleLine = true
+                singleLine = true,
+                colors = fieldColors(accentColor),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("tx_hash_field")
             )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                OutlinedButton(
+                    onClick = onVerifyManually,
+                    border = BorderStroke(1.dp, accentColor),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("verify_tx_button")
+                ) {
+                    Text("Проверить TXID", fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+                }
                 TextButton(
                     onClick = {
-                        val sampleHex = "a8f4c2e6b9d10457382910fae5cb3498172049eaf5bc218390d4e5fa68c719e0"
-                        onTxHashChange(sampleHex)
+                        onTxHashChange("a8f4c2e6b9d10457382910fae5cb3498172049eaf5bc218390d4e5fa68c719e0")
                     },
-                    contentPadding = PaddingValues(0.dp)
+                    contentPadding = PaddingValues(horizontal = 6.dp)
                 ) {
                     Text(
-                        text = "Вставить тестовый TXID",
-                        color = Color(0xFFF7931A),
+                        text = "Тестовый TXID",
+                        color = Color.Gray,
                         fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1
                     )
                 }
             }
@@ -1270,31 +1820,37 @@ fun CryptoPaymentDetails(
     }
 }
 
+/** Legacy helper retained for compatibility; now renders a real brand mark. */
 @Composable
 fun PaymentBrandPill(name: String) {
-    Surface(
-        color = Color.Black.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(4.dp),
-        border = BorderStroke(0.5.dp, Color.Gray)
-    ) {
-        Text(
-            text = name,
-            color = Color.LightGray,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-        )
-    }
+    PaymentBrandLogo(brand = CardBrand.fromId(name), height = 18.dp)
 }
 
 @Composable
 fun ReceiptRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
     ) {
-        Text(label, color = Color.Gray, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-        Text(value, color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
+        Text(
+            text = label,
+            color = Color.Gray,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = value,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
     }
 }

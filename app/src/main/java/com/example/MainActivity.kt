@@ -24,6 +24,9 @@ class MainActivity : ComponentActivity() {
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_START) {
                 viewModel.setOnlineStatus(true)
+                // Re-check entitlement: the user may have just returned from a
+                // 3-D Secure page or from paying a CryptoBot invoice.
+                viewModel.checkSubscriptionStatus()
             } else if (event == Lifecycle.Event.ON_STOP) {
                 viewModel.setOnlineStatus(false)
             }
