@@ -2,7 +2,16 @@ import { config } from './config.js';
 
 /** Shared-secret guard for the app-facing API (webhooks have their own proof). */
 export function requireClientKey(req, res, next) {
-  if (!config.clientKey) return next(); // open in local/dev deployments
+  if (!config.clientKey) {
+    // A publicly reachable payment service must not silently become an open
+    // invoice/subscription API when a Railway Variable is omitted. Mock tests
+    // and an explicitly opted-in local demo remain possible.
+    if (config.mockProviders || config.allowInsecureClientAuth) return next();
+    return res.status(503).json({
+      ok: false,
+      error: { code: 'CLIENT_AUTH_NOT_CONFIGURED', message: 'MALO_CLIENT_KEY is not configured' },
+    });
+  }
   const provided = req.get('X-MalO-Client-Key');
   if (provided && provided === config.clientKey) return next();
   return res.status(401).json({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Invalid client key' } });

@@ -1,12 +1,13 @@
 package com.example.payments
 
 /**
- * Crypto assets accepted through CryptoBot (Telegram Crypto Pay) and the
- * blockchain networks each of them can be funded from.
+ * Crypto assets accepted through CryptoBot (Telegram Crypto Pay) plus legacy
+ * network labels retained for compatibility with older gateway responses.
  *
- * The list mirrors `server/src/networks.js`; the gateway remains the source of
- * truth and overrides it at runtime via `/api/catalog`, but these defaults keep
- * the picker usable offline.
+ * A Crypto Pay invoice is paid from the user's CryptoBot balance: its invoice
+ * API receives an asset, not an on-chain network or transaction hash. The
+ * gateway remains the source of truth and the app never treats these labels as
+ * confirmation of an external blockchain transfer.
  */
 
 data class CryptoNetwork(

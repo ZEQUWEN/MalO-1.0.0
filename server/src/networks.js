@@ -1,12 +1,11 @@
 /**
- * Catalogue of crypto assets and the blockchain networks they can be paid on
- * through CryptoBot (Crypto Pay API).
+ * Catalogue of crypto assets plus legacy network labels used by older MalO APKs.
  *
- * Crypto Pay settles invoices inside the @CryptoBot wallet, so the *network* is
- * the rail the user tops up / withdraws with. We expose it explicitly because
- * users pay from external wallets and must not send, say, TRC-20 USDT to a TON
- * address. The chosen network travels with the invoice `payload` and is echoed
- * back by the webhook, so the receipt always states the exact rail used.
+ * Crypto Pay invoices settle from the user's @CryptoBot balance. The Crypto Pay
+ * `createInvoice` API accepts an asset, but no external blockchain-network
+ * parameter and no transaction hash. Consequently these network values are
+ * compatibility/funding hints bound into our own payload; they must never be
+ * presented as the chain on which a Crypto Pay invoice was confirmed.
  */
 
 /** @typedef {{ id: string, title: string, short: string, color: string, explorer: string, minConfirmations: number, txRegex: string }} Network */
@@ -87,8 +86,8 @@ export const NETWORKS = {
 };
 
 /**
- * Assets supported by Crypto Pay, each with the networks we accept for it.
- * `asset` is the exact ticker Crypto Pay expects in `createInvoice`.
+ * Assets available in the MalO Crypto Pay picker. `asset` is the exact ticker
+ * sent to `createInvoice`; the network list only validates legacy app hints.
  */
 export const ASSETS = [
   {
