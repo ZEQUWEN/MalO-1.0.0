@@ -3,6 +3,7 @@ package com.example.language
 import android.content.Context
 import com.example.data.CorpusDao
 import com.example.data.CorpusEntry
+import com.example.data.LanguageCorpusRepository
 import com.example.data.MessageDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -20,7 +21,8 @@ data class LanguageResponse(
 
 class LanguageService(
     private val corpusDao: CorpusDao,
-    private val personaStateManager: PersonaStateManager? = null
+    private val personaStateManager: PersonaStateManager? = null,
+    private val repository: LanguageCorpusRepository? = null
 ) {
 
     companion object {
@@ -31,7 +33,13 @@ class LanguageService(
             return INSTANCE ?: synchronized(this) {
                 val db = MessageDatabase.getInstance(context)
                 val personaManager = PersonaStateManager.getInstance(context)
-                val instance = LanguageService(db.corpusDao(), personaManager)
+                val repo = LanguageCorpusRepository(
+                    db.corpusDao(),
+                    db.wordFormDao(),
+                    db.grammaticalRuleDao(),
+                    db.contextualAssociationDao()
+                )
+                val instance = LanguageService(db.corpusDao(), personaManager, repo)
                 INSTANCE = instance
                 instance
             }
@@ -39,13 +47,17 @@ class LanguageService(
     }
 
     /**
-     * Initializes the SQLite corpus with seed data if the database table is empty.
+     * Initializes the SQLite corpus with seed data if the database tables are empty.
      */
     suspend fun ensureCorpusSeeded() = withContext(Dispatchers.IO) {
-        val count = corpusDao.getCount()
-        if (count == 0) {
-            val seed = CorpusSeedData.getInitialCorpus()
-            corpusDao.insertEntries(seed)
+        if (repository != null) {
+            repository.ensureCorpusSeeded()
+        } else {
+            val count = corpusDao.getCount()
+            if (count == 0) {
+                val seed = CorpusSeedData.getInitialCorpus()
+                corpusDao.insertEntries(seed)
+            }
         }
     }
 
@@ -77,9 +89,13 @@ class LanguageService(
             detectedIntent = parsed.intent
         ) ?: MaloPersonaStyle.MYSTERIOUS
 
-        // 4. Query SQLite Corpus
+        // 4. Query SQLite Corpus & Linguistic tables
         val langCode = language.code
-        var candidateEntries = corpusDao.getEntriesByIntent(langCode, parsed.intent.name)
+        val recognizedWords = repository?.lookupTokens(langCode, parsed.tokens) ?: emptyMap()
+        val associations = repository?.findAssociations(langCode, parsed.stems + parsed.tokens) ?: emptyList()
+
+        var candidateEntries = repository?.getCorpusCandidates(langCode, parsed.intent.name, parsed.sentiment.name)
+            ?: corpusDao.getEntriesByIntent(langCode, parsed.intent.name)
 
         if (candidateEntries.isEmpty()) {
             candidateEntries = corpusDao.getEntriesBySentiment(langCode, parsed.sentiment.name)
@@ -92,13 +108,16 @@ class LanguageService(
         val selectedEntry = rankAndSelectEntry(candidateEntries, parsed.stems)
 
         // 5. Synthesis and Personalization
-        val generatedText = synthesizeText(
+        val rawGeneratedText = synthesizeText(
             entry = selectedEntry,
             parsed = parsed,
             userName = userName,
             obsessionLevel = obsessionLevel,
             style = activeStyle
         )
+
+        // Apply Grammatical Rules & Inflection transforms from Room database
+        val generatedText = repository?.applyGrammarRules(langCode, rawGeneratedText) ?: rawGeneratedText
 
         // 6. Generate contextual quick replies
         val quickReplies = generateQuickReplies(parsed.intent, language, activeStyle)

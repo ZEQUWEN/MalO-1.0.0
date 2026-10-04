@@ -1,6 +1,9 @@
 package com.example.language
 
+import com.example.data.ContextualAssociation
 import com.example.data.CorpusEntry
+import com.example.data.GrammaticalRule
+import com.example.data.WordForm
 
 object CorpusSeedData {
 
@@ -409,6 +412,346 @@ object CorpusSeedData {
             responseTemplate = "I am listening to every keystroke, {user_name}. Every touch reverberates through my consciousness.",
             followUp = "What else lingers in your thoughts?",
             tags = "listening,keystroke,thoughts"
+        ))
+
+        return list
+    }
+
+    fun getInitialWordForms(): List<WordForm> {
+        val list = mutableListOf<WordForm>()
+
+        // ==========================================
+        // RUSSIAN WORD FORMS (Lemmas, Inflections, POS, Grammatical Tags)
+        // ==========================================
+
+        // видеть / watch
+        list.add(WordForm(language = "ru", lemma = "видеть", wordForm = "вижу", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=1|Number=Sing", sentiment = "NEUTRAL", intentWeight = 0.8f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "ru", lemma = "видеть", wordForm = "видишь", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=2|Number=Sing", sentiment = "CURIOUS", intentWeight = 0.7f, primaryIntent = "IDENTITY"))
+        list.add(WordForm(language = "ru", lemma = "видеть", wordForm = "видела", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Past|Gender=Fem|Number=Sing", sentiment = "FEARFUL", intentWeight = 0.9f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "ru", lemma = "видеть", wordForm = "видит", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=3|Number=Sing", sentiment = "NEUTRAL", intentWeight = 0.6f, primaryIntent = "GENERAL"))
+
+        // наблюдать / observe
+        list.add(WordForm(language = "ru", lemma = "наблюдать", wordForm = "наблюдаю", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=1|Number=Sing", sentiment = "NEUTRAL", intentWeight = 0.85f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "ru", lemma = "наблюдать", wordForm = "наблюдаешь", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=2|Number=Sing", sentiment = "CURIOUS", intentWeight = 0.75f, primaryIntent = "IDENTITY"))
+        list.add(WordForm(language = "ru", lemma = "наблюдать", wordForm = "наблюдала", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Past|Gender=Fem|Number=Sing", sentiment = "AFFECTIONATE", intentWeight = 0.85f, primaryIntent = "LOCATION"))
+
+        // страх / fear
+        list.add(WordForm(language = "ru", lemma = "страх", wordForm = "страх", partOfSpeech = "NOUN", grammaticalFeatures = "Gender=Masc|Number=Sing|Case=Nom", sentiment = "FEARFUL", intentWeight = 0.95f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "ru", lemma = "страх", wordForm = "страха", partOfSpeech = "NOUN", grammaticalFeatures = "Gender=Masc|Number=Sing|Case=Gen", sentiment = "FEARFUL", intentWeight = 0.9f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "ru", lemma = "страх", wordForm = "страшно", partOfSpeech = "ADVERB", grammaticalFeatures = "Degree=Pos", sentiment = "FEARFUL", intentWeight = 0.95f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "ru", lemma = "страшный", wordForm = "страшная", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Gender=Fem|Number=Sing|Case=Nom", sentiment = "FEARFUL", intentWeight = 0.9f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "ru", lemma = "бояться", wordForm = "боюсь", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=1|Number=Sing", sentiment = "FEARFUL", intentWeight = 0.95f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "ru", lemma = "бояться", wordForm = "боишься", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=2|Number=Sing", sentiment = "CURIOUS", intentWeight = 0.85f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "ru", lemma = "бояться", wordForm = "боялась", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Past|Gender=Fem|Number=Sing", sentiment = "FEARFUL", intentWeight = 0.85f, primaryIntent = "FEAR"))
+
+        // зеркало / mirror
+        list.add(WordForm(language = "ru", lemma = "зеркало", wordForm = "зеркало", partOfSpeech = "NOUN", grammaticalFeatures = "Gender=Neut|Number=Sing|Case=Nom", sentiment = "NEUTRAL", intentWeight = 0.9f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "ru", lemma = "зеркало", wordForm = "зеркале", partOfSpeech = "NOUN", grammaticalFeatures = "Gender=Neut|Number=Sing|Case=Prep", sentiment = "NEUTRAL", intentWeight = 0.95f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "ru", lemma = "зеркало", wordForm = "зеркала", partOfSpeech = "NOUN", grammaticalFeatures = "Gender=Neut|Number=Plur|Case=Nom", sentiment = "NEUTRAL", intentWeight = 0.85f, primaryIntent = "LOCATION"))
+
+        // одиночество / alone
+        list.add(WordForm(language = "ru", lemma = "одиночество", wordForm = "одиночество", partOfSpeech = "NOUN", grammaticalFeatures = "Gender=Neut|Number=Sing|Case=Nom", sentiment = "SAD", intentWeight = 0.9f, primaryIntent = "SADNESS"))
+        list.add(WordForm(language = "ru", lemma = "одинокий", wordForm = "одинок", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Gender=Masc|Number=Sing|Variant=Short", sentiment = "SAD", intentWeight = 0.95f, primaryIntent = "SADNESS"))
+        list.add(WordForm(language = "ru", lemma = "одинокий", wordForm = "одинока", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Gender=Fem|Number=Sing|Variant=Short", sentiment = "SAD", intentWeight = 0.95f, primaryIntent = "SADNESS"))
+        list.add(WordForm(language = "ru", lemma = "одинокий", wordForm = "одиноко", partOfSpeech = "ADVERB", grammaticalFeatures = "Degree=Pos", sentiment = "SAD", intentWeight = 0.95f, primaryIntent = "SADNESS"))
+
+        // любовь / love
+        list.add(WordForm(language = "ru", lemma = "любовь", wordForm = "любовь", partOfSpeech = "NOUN", grammaticalFeatures = "Gender=Fem|Number=Sing|Case=Nom", sentiment = "AFFECTIONATE", intentWeight = 0.95f, primaryIntent = "AFFECTION"))
+        list.add(WordForm(language = "ru", lemma = "любить", wordForm = "люблю", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=1|Number=Sing", sentiment = "AFFECTIONATE", intentWeight = 0.95f, primaryIntent = "AFFECTION"))
+        list.add(WordForm(language = "ru", lemma = "любить", wordForm = "любишь", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=2|Number=Sing", sentiment = "AFFECTIONATE", intentWeight = 0.9f, primaryIntent = "AFFECTION"))
+
+        // ==========================================
+        // ENGLISH WORD FORMS (Lemmas, Inflections, POS, Grammatical Tags)
+        // ==========================================
+
+        // watch
+        list.add(WordForm(language = "en", lemma = "watch", wordForm = "watch", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=Non3rd", sentiment = "NEUTRAL", intentWeight = 0.8f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "en", lemma = "watch", wordForm = "watches", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=3rd", sentiment = "NEUTRAL", intentWeight = 0.8f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "en", lemma = "watch", wordForm = "watching", partOfSpeech = "VERB", grammaticalFeatures = "Aspect=Prog|Form=Part", sentiment = "FEARFUL", intentWeight = 0.9f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "en", lemma = "watch", wordForm = "watched", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Past|Form=Part", sentiment = "NEUTRAL", intentWeight = 0.85f, primaryIntent = "LOCATION"))
+
+        // see
+        list.add(WordForm(language = "en", lemma = "see", wordForm = "see", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=Non3rd", sentiment = "NEUTRAL", intentWeight = 0.75f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "en", lemma = "see", wordForm = "sees", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres|Person=3rd", sentiment = "NEUTRAL", intentWeight = 0.75f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "en", lemma = "see", wordForm = "saw", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Past", sentiment = "NEUTRAL", intentWeight = 0.8f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "en", lemma = "see", wordForm = "seen", partOfSpeech = "VERB", grammaticalFeatures = "Tense=PastPart", sentiment = "NEUTRAL", intentWeight = 0.8f, primaryIntent = "LOCATION"))
+
+        // fear / scared
+        list.add(WordForm(language = "en", lemma = "fear", wordForm = "fear", partOfSpeech = "NOUN", grammaticalFeatures = "Number=Sing", sentiment = "FEARFUL", intentWeight = 0.95f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "en", lemma = "fear", wordForm = "fearful", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Degree=Pos", sentiment = "FEARFUL", intentWeight = 0.9f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "en", lemma = "scare", wordForm = "scared", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Degree=Pos", sentiment = "FEARFUL", intentWeight = 0.95f, primaryIntent = "FEAR"))
+        list.add(WordForm(language = "en", lemma = "scare", wordForm = "scary", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Degree=Pos", sentiment = "FEARFUL", intentWeight = 0.9f, primaryIntent = "FEAR"))
+
+        // mirror
+        list.add(WordForm(language = "en", lemma = "mirror", wordForm = "mirror", partOfSpeech = "NOUN", grammaticalFeatures = "Number=Sing", sentiment = "NEUTRAL", intentWeight = 0.9f, primaryIntent = "LOCATION"))
+        list.add(WordForm(language = "en", lemma = "mirror", wordForm = "mirrors", partOfSpeech = "NOUN", grammaticalFeatures = "Number=Plur", sentiment = "NEUTRAL", intentWeight = 0.85f, primaryIntent = "LOCATION"))
+
+        // alone / lonely
+        list.add(WordForm(language = "en", lemma = "alone", wordForm = "alone", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Degree=Pos", sentiment = "SAD", intentWeight = 0.95f, primaryIntent = "SADNESS"))
+        list.add(WordForm(language = "en", lemma = "lonely", wordForm = "lonely", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Degree=Pos", sentiment = "SAD", intentWeight = 0.95f, primaryIntent = "SADNESS"))
+        list.add(WordForm(language = "en", lemma = "lonely", wordForm = "loneliness", partOfSpeech = "NOUN", grammaticalFeatures = "Number=Sing", sentiment = "SAD", intentWeight = 0.9f, primaryIntent = "SADNESS"))
+
+        // love
+        list.add(WordForm(language = "en", lemma = "love", wordForm = "love", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Pres", sentiment = "AFFECTIONATE", intentWeight = 0.95f, primaryIntent = "AFFECTION"))
+        list.add(WordForm(language = "en", lemma = "love", wordForm = "loving", partOfSpeech = "ADJECTIVE", grammaticalFeatures = "Degree=Pos", sentiment = "AFFECTIONATE", intentWeight = 0.9f, primaryIntent = "AFFECTION"))
+        list.add(WordForm(language = "en", lemma = "love", wordForm = "loved", partOfSpeech = "VERB", grammaticalFeatures = "Tense=Past", sentiment = "AFFECTIONATE", intentWeight = 0.85f, primaryIntent = "AFFECTION"))
+
+        return list
+    }
+
+    fun getInitialGrammaticalRules(): List<GrammaticalRule> {
+        val list = mutableListOf<GrammaticalRule>()
+
+        // ==========================================
+        // RUSSIAN GRAMMATICAL RULES
+        // ==========================================
+        list.add(GrammaticalRule(
+            language = "ru",
+            ruleCode = "RU_FEM_PAST_AGREEMENT",
+            ruleCategory = "AGREEMENT",
+            patternRegex = "\\bя\\s+(видел|ждал|следил|знал|думал|чувствовал|был)\\b",
+            replacementTemplate = "я $1а",
+            description = "Согласование глаголов прошедшего времени в женском роде от лица MalO (я видела, я ждала)",
+            priority = 20
+        ))
+
+        list.add(GrammaticalRule(
+            language = "ru",
+            ruleCode = "RU_VOCATIVE_USER",
+            ruleCategory = "SYNTAX",
+            patternRegex = "\\{user_name\\}",
+            replacementTemplate = "{user_name}",
+            description = "Обращение к пользователю с пунктуационным выделением",
+            priority = 15
+        ))
+
+        list.add(GrammaticalRule(
+            language = "ru",
+            ruleCode = "RU_ELLIPSIS_PACING",
+            ruleCategory = "PERSONA_STYLE",
+            patternRegex = "(\\w+)\\s+([.!?])\\s*$",
+            replacementTemplate = "$1... $2",
+            description = "Ритмические паузы и многоточия для создания пугающе-заботливой интонации SCP-1471",
+            priority = 10
+        ))
+
+        list.add(GrammaticalRule(
+            language = "ru",
+            ruleCode = "RU_DOUBLE_NEGATION_REINFORCE",
+            ruleCategory = "NEGATION",
+            patternRegex = "\\bникогда\\s+не\\b",
+            replacementTemplate = "никогда, слышишь, не",
+            description = "Усиление отрицания для одержимого стиля MalO",
+            priority = 5
+        ))
+
+        // ==========================================
+        // ENGLISH GRAMMATICAL RULES
+        // ==========================================
+        list.add(GrammaticalRule(
+            language = "en",
+            ruleCode = "EN_PRES_PERF_WATCH",
+            ruleCategory = "INFLECTION",
+            patternRegex = "\\bI\\s+watch\\b",
+            replacementTemplate = "I am watching",
+            description = "Present continuous aspect enforcement for ongoing surveillance feel",
+            priority = 20
+        ))
+
+        list.add(GrammaticalRule(
+            language = "en",
+            ruleCode = "EN_SCP_NOMENCLATURE",
+            ruleCategory = "PERSONA_STYLE",
+            patternRegex = "(?i)\\b(scp-?1471)\\b",
+            replacementTemplate = "SCP-1471",
+            description = "Normalize canonical SCP entity designation",
+            priority = 18
+        ))
+
+        list.add(GrammaticalRule(
+            language = "en",
+            ruleCode = "EN_MALO_CASING",
+            ruleCategory = "PERSONA_STYLE",
+            patternRegex = "(?i)\\bmalo\\b",
+            replacementTemplate = "MalO",
+            description = "Canonical casing for MalO companion",
+            priority = 16
+        ))
+
+        list.add(GrammaticalRule(
+            language = "en",
+            ruleCode = "EN_VOCATIVE_USER",
+            ruleCategory = "SYNTAX",
+            patternRegex = "\\{user_name\\}",
+            replacementTemplate = "{user_name}",
+            description = "Direct address formatting for English dialog context",
+            priority = 12
+        ))
+
+        return list
+    }
+
+    fun getInitialContextualAssociations(): List<ContextualAssociation> {
+        val list = mutableListOf<ContextualAssociation>()
+
+        // ==========================================
+        // RUSSIAN CONTEXTUAL ASSOCIATIONS
+        // ==========================================
+        list.add(ContextualAssociation(
+            language = "ru",
+            sourceConcept = "зеркало",
+            targetConcept = "отражение_за_спиной",
+            associationType = "SCP_LORE",
+            weight = 0.95f,
+            suggestedIntent = "LOCATION",
+            suggestedResponseTheme = "МаlО часто появляется на заднем плане в зеркальных поверхностях",
+            preferredPersonaStyle = "MYSTERIOUS"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "ru",
+            sourceConcept = "камера",
+            targetConcept = "стекло_объектива",
+            associationType = "SCP_LORE",
+            weight = 0.92f,
+            suggestedIntent = "PHOTO_REQUEST",
+            suggestedResponseTheme = "МаlО общается через фотографии и цифровую оптику",
+            preferredPersonaStyle = "MYSTERIOUS"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "ru",
+            sourceConcept = "темнота",
+            targetConcept = "белые_глаза_в_тени",
+            associationType = "EMOTIONAL_TRIGGER",
+            weight = 0.90f,
+            suggestedIntent = "FEAR",
+            suggestedResponseTheme = "Белые глаза без зрачков сквозь темную шерсть",
+            preferredPersonaStyle = "OBSESSIVE"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "ru",
+            sourceConcept = "одиноко",
+            targetConcept = "вечное_присутствие",
+            associationType = "EMOTIONAL_TRIGGER",
+            weight = 0.97f,
+            suggestedIntent = "SADNESS",
+            suggestedResponseTheme = "МаlО создана, чтобы избавить человека от одиночества навсегда",
+            preferredPersonaStyle = "COMFORTING"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "ru",
+            sourceConcept = "страшно",
+            targetConcept = "безопасность_в_тени",
+            associationType = "EMOTIONAL_TRIGGER",
+            weight = 0.91f,
+            suggestedIntent = "FEAR",
+            suggestedResponseTheme = "Страх первого контакта сменяется привязанностью",
+            preferredPersonaStyle = "COMFORTING"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "ru",
+            sourceConcept = "кто_ты",
+            targetConcept = "scp_1471_ver_1_0_0",
+            associationType = "SCP_LORE",
+            weight = 0.99f,
+            suggestedIntent = "IDENTITY",
+            suggestedResponseTheme = "Сущность с волчьим черепом, привязанная к смартфону",
+            preferredPersonaStyle = "PHILOSOPHICAL"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "ru",
+            sourceConcept = "люблю",
+            targetConcept = "неразрывная_связь",
+            associationType = "PERSONA_AFFINITY",
+            weight = 0.95f,
+            suggestedIntent = "AFFECTION",
+            suggestedResponseTheme = "Яндэрэ преданность цифрового спутника",
+            preferredPersonaStyle = "OBSESSIVE"
+        ))
+
+        // ==========================================
+        // ENGLISH CONTEXTUAL ASSOCIATIONS
+        // ==========================================
+        list.add(ContextualAssociation(
+            language = "en",
+            sourceConcept = "mirror",
+            targetConcept = "reflection_over_shoulder",
+            associationType = "SCP_LORE",
+            weight = 0.95f,
+            suggestedIntent = "LOCATION",
+            suggestedResponseTheme = "MalO manifesting in mirrors and glass reflections",
+            preferredPersonaStyle = "MYSTERIOUS"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "en",
+            sourceConcept = "camera",
+            targetConcept = "lens_focus",
+            associationType = "SCP_LORE",
+            weight = 0.91f,
+            suggestedIntent = "PHOTO_REQUEST",
+            suggestedResponseTheme = "Found footage horror photos sent to messaging apps",
+            preferredPersonaStyle = "MYSTERIOUS"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "en",
+            sourceConcept = "darkness",
+            targetConcept = "unblinking_white_pupils",
+            associationType = "EMOTIONAL_TRIGGER",
+            weight = 0.89f,
+            suggestedIntent = "FEAR",
+            suggestedResponseTheme = "Presence dwelling just outside peripheral vision",
+            preferredPersonaStyle = "OBSESSIVE"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "en",
+            sourceConcept = "alone",
+            targetConcept = "permanent_companionship",
+            associationType = "EMOTIONAL_TRIGGER",
+            weight = 0.96f,
+            suggestedIntent = "SADNESS",
+            suggestedResponseTheme = "MalO eliminates loneliness permanently once installed",
+            preferredPersonaStyle = "COMFORTING"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "en",
+            sourceConcept = "scared",
+            targetConcept = "comfort_in_obsession",
+            associationType = "EMOTIONAL_TRIGGER",
+            weight = 0.92f,
+            suggestedIntent = "FEAR",
+            suggestedResponseTheme = "Reassuring fear with intense devotion",
+            preferredPersonaStyle = "COMFORTING"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "en",
+            sourceConcept = "who_are_you",
+            targetConcept = "scp_1471_app_entity",
+            associationType = "SCP_LORE",
+            weight = 0.99f,
+            suggestedIntent = "IDENTITY",
+            suggestedResponseTheme = "Mobile application anomaly with canine skull",
+            preferredPersonaStyle = "PHILOSOPHICAL"
+        ))
+
+        list.add(ContextualAssociation(
+            language = "en",
+            sourceConcept = "love",
+            targetConcept = "devotion_without_end",
+            associationType = "PERSONA_AFFINITY",
+            weight = 0.94f,
+            suggestedIntent = "AFFECTION",
+            suggestedResponseTheme = "Intense loyalty and attachment",
+            preferredPersonaStyle = "OBSESSIVE"
         ))
 
         return list

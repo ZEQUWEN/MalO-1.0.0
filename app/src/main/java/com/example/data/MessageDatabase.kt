@@ -5,10 +5,23 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Message::class, CorpusEntry::class], version = 3, exportSchema = false)
+@Database(
+    entities = [
+        Message::class,
+        CorpusEntry::class,
+        WordForm::class,
+        GrammaticalRule::class,
+        ContextualAssociation::class
+    ],
+    version = 4,
+    exportSchema = false
+)
 abstract class MessageDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun corpusDao(): CorpusDao
+    abstract fun wordFormDao(): WordFormDao
+    abstract fun grammaticalRuleDao(): GrammaticalRuleDao
+    abstract fun contextualAssociationDao(): ContextualAssociationDao
 
     companion object {
         @Volatile
