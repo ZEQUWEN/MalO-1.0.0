@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MalO ver. 1.0.0 | SCP-1471 Android APK</title>
+    <style>
+        :root {
+            --bg: #0B0A10;
+            --surface: #14131D;
+            --card-bg: #1B1A28;
+            --neon-purple: #BB86FC;
+            --neon-green: #00FFC4;
+            --text-main: #FFFFFF;
+            --text-dim: #9E9BB2;
+            --danger: #FF5252;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Courier New', Courier, monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding: 24px 16px;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(ellipse at 50% 10%, rgba(187, 134, 252, 0.12), transparent 60%),
+                radial-gradient(ellipse at 80% 80%, rgba(0, 255, 196, 0.05), transparent 50%);
+        }
+
+        .container {
+            max-width: 640px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .avatar-wrap {
+            width: 110px;
+            height: 110px;
+            margin: 0 auto 16px;
+            border-radius: 50%;
+            border: 2px solid var(--neon-purple);
+            box-shadow: 0 0 24px rgba(187, 134, 252, 0.45);
+            background: #190F2E;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            animation: pulse-glow 3s infinite alternate;
+        }
+
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 15px rgba(187, 134, 252, 0.3); }
+            100% { box-shadow: 0 0 32px rgba(187, 134, 252, 0.7); }
+        }
+
+        .avatar-icon {
+            font-size: 54px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            background: var(--neon-green);
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+            box-shadow: 0 0 10px var(--neon-green);
+            animation: blink 2s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .title {
+            font-size: 26px;
+            font-weight: 800;
+            color: #FFFFFF;
+            letter-spacing: 2px;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
+
+        .subtitle {
+            color: var(--neon-purple);
+            font-size: 13px;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+
+        .badge-base {
+            display: inline-block;
+            background: rgba(0, 255, 196, 0.15);
+            color: var(--neon-green);
+            border: 1px solid var(--neon-green);
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin-top: 6px;
+        }
+
+        .download-card {
+            background: var(--surface);
+            border: 1px solid rgba(187, 134, 252, 0.35);
+            border-radius: 14px;
+            padding: 24px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .btn-download {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            background: var(--neon-purple);
+            color: #000000;
+            text-decoration: none;
+            padding: 16px 28px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            transition: all 0.25s ease;
+            box-shadow: 0 4px 18px rgba(187, 134, 252, 0.4);
+            margin-bottom: 12px;
+        }
+
+        .btn-download:hover {
+            background: #D7B5FF;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 26px rgba(187, 134, 252, 0.6);
+        }
+
+        .btn-secondary {
+            display: inline-block;
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 12px;
+            padding: 6px 12px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            transition: color 0.2s, border-color 0.2s;
+        }
+
+        .btn-secondary:hover {
+            color: var(--neon-green);
+            border-color: var(--neon-green);
+        }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin: 20px 0 12px;
+            text-align: center;
+        }
+
+        .meta-item {
+            background: var(--card-bg);
+            padding: 10px 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .meta-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .meta-val {
+            font-size: 13px;
+            font-weight: bold;
+            color: #FFF;
+            margin-top: 4px;
+        }
+
+        .features-card, .instructions-card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            color: var(--neon-purple);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .features-list {
+            list-style: none;
+        }
+
+        .features-list li {
+            font-size: 13px;
+            color: #DDD;
+            margin-bottom: 10px;
+            line-height: 1.5;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .features-list li::before {
+            content: "◆";
+            color: var(--neon-green);
+            font-size: 10px;
+            margin-top: 3px;
+        }
+
+        .steps-list {
+            list-style: none;
+            counter-reset: steps-counter;
+        }
+
+        .steps-list li {
+            counter-increment: steps-counter;
+            font-size: 13px;
+            color: #CCC;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            line-height: 1.4;
+        }
+
+        .steps-list li::before {
+            content: counter(steps-counter);
+            background: var(--neon-purple);
+            color: #000;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .footer {
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 11px;
+            margin-top: 20px;
+            padding-bottom: 24px;
+        }
+
+        .qr-section {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px dashed rgba(255, 255, 255, 0.1);
+        }
+
+        .qr-img {
+            width: 140px;
+            height: 140px;
+            background: white;
+            padding: 8px;
+            border-radius: 8px;
+            margin: 10px auto;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <div class="avatar-wrap">
+            <span class="avatar-icon">🐺</span>
+        </div>
+        <div class="title">MalO ver. 1.0.0</div>
+        <div class="subtitle">SCP-1471 Digital Entity Interaction App</div>
+        <div style="margin-top: 6px;">
+            <span class="status-dot"></span>
+            <span style="font-size: 12px; color: var(--neon-green);">СУЩНОСТЬ АКТИВНА</span>
+        </div>
+        <div class="badge-base">DEEPSEEK AI INTEGRATED</div>
+    </div>
+
+    <div class="download-card">
+        <a href="/MalO-1.0.0.apk" download="MalO-1.0.0.apk" class="btn-download">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+            </svg>
+            Скачать MalO 1.0.0 APK
+        </a>
+        
+        <div>
+            <a href="/app-debug.apk" download="app-debug.apk" class="btn-secondary">
+                Зеркало загрузки (app-debug.apk)
+            </a>
+        </div>
+
+        <div class="meta-grid">
+            <div class="meta-item">
+                <div class="meta-label">Версия</div>
+                <div class="meta-val">1.0.0</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Размер</div>
+                <div class="meta-val">~24 MB</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Платформа</div>
+                <div class="meta-val">Android 8.0+</div>
+            </div>
+        </div>
+
+        <div class="qr-section">
+            <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px;">Наведите камеру смартфона для быстрой загрузки:</div>
+            <img class="qr-img" id="qrCode" alt="QR Code" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https%3A%2F%2F" />
+        </div>
+    </div>
+
+    <div class="features-card">
+        <div class="section-title">Особенности версии:</div>
+        <ul class="features-list">
+            <li><strong>DeepSeek AI для Pro:</strong> Безграничное живое общение с MalO без цензурных зажимов и с долгосрочной памятью диалогов.</li>
+            <li><strong>Фоновое настроение:</strong> Цвет сущности плавно проецируется на светящуюся точку статуса активности.</li>
+            <li><strong>Атмосферные фото:</strong> Реалистичные снимки присутствия MalO в реальном мире в стиле found footage.</li>
+            <li><strong>Голосовые заметки:</strong> Запись голосовых сообщений и встроенный аудиоплеер с живой визуализацией звуковой волны.</li>
+            <li><strong>Автономный режим:</strong> Полная поддержка локального диалогового движка (NLP SQLite) при отсутствии сети.</li>
+        </ul>
+    </div>
+
+    <div class="instructions-card">
+        <div class="section-title">Инструкция по установке:</div>
+        <ol class="steps-list">
+            <li>Нажмите на кнопку <strong>«Скачать MalO 1.0.0 APK»</strong> на вашем Android-устройстве.</li>
+            <li>После завершения загрузки откройте скачанный файл через панель уведомлений или «Загрузки».</li>
+            <li>Если система запросит разрешение: выберите <em>«Настройки» → «Разрешить установку из этого источника»</em>.</li>
+            <li>Нажмите <strong>«Установить»</strong> и запустите приложение MalO.</li>
+        </ol>
+    </div>
+
+    <div class="footer">
+        SCP Foundation Classified Terminal • SCP-1471 MalO ver. 1.0.0<br>
+        Warning: Application manifests anomalous psycho-digital properties.
+    </div>
+</div>
+
+<script>
+    // Dynamically update QR code with current page URL + APK
+    try {
+        const apkUrl = window.location.origin + '/MalO-1.0.0.apk';
+        document.getElementById('qrCode').src = 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent(apkUrl);
+    } catch (e) {}
+</script>
+
+</body>
+</html>
