@@ -18,8 +18,12 @@ the tracked `Dockerfile`; do not add a separate Railpack/Nixpacks build command.
    (`railway.json` already defines it).
 2. Leave the service root at the repository root. Railway runs `Dockerfile`,
    builds the Android APK, then runs the lightweight Node gateway.
-3. Attach a **Railway Volume** at `/app/.data`.
-4. Create a deployment. Railway injects `$PORT`; do not hard-code a public port.
+3. Attach a **Railway Volume** at `/app/.data` and keep this service at
+   **one replica**. The included JSON store is intentionally single-instance.
+4. Generate a Railway domain (or attach your custom HTTPS domain) and set that
+   exact origin as `MALO_PUBLIC_URL` before registering provider webhooks.
+   Railway's `RAILWAY_PUBLIC_DOMAIN` is used only as a fallback.
+5. Create a deployment. Railway injects `$PORT`; do not hard-code a public port.
 
 A successful runtime log includes:
 
@@ -28,7 +32,12 @@ A successful runtime log includes:
 [malo-gateway] listening on 0.0.0.0:<PORT>
 [malo-gateway] public url: https://malo.up.railway.app
 [malo-gateway] yookassa webhook:  https://malo.up.railway.app/api/webhooks/yookassa
+[malo-gateway] Crypto Pay verified for app <app_id>.
 ```
+
+If the last line says `Crypto Pay verification failed`, the token, API base, or
+outbound connectivity is wrong. Do **not** register/publish until it is fixed.
+The gateway starts but CryptoBot checkout fails closed.
 
 The container binds to `0.0.0.0:$PORT`, which is required by Railway. The
 `/api/health` check in `railway.json` is the deployment health check.
@@ -39,11 +48,15 @@ Set these values in **Service → Variables**. `PORT` is supplied by Railway.
 Never commit real keys or put them in the Android `.env` file.
 
 ```dotenv
+# Use your actual Railway/custom public HTTPS origin, not an old deployment.
 MALO_PUBLIC_URL=https://malo.up.railway.app
 MALO_DATA_DIR=/app/.data
 
-# A high-entropy value. It must also be MALO_CLIENT_KEY in the Android build.
+# Required in production. Use at least 32 random bytes and put the same value
+# in the *release-build environment*, never in Git. This is deployment pairing,
+# not end-user authentication (APK strings can be extracted).
 MALO_CLIENT_KEY=<long-random-value>
+MALO_MOCK_PROVIDERS=0
 
 YOOKASSA_SHOP_ID=<shopId>
 YOOKASSA_SECRET_KEY=<secret-key>
@@ -55,6 +68,7 @@ YOOKASSA_VERIFY_NETWORK=1
 CRYPTOBOT_TOKEN=<fresh-crypto-pay-api-token>
 CRYPTOBOT_API_BASE=https://pay.crypt.bot/api
 CRYPTOBOT_INVOICE_EXPIRES_IN=3600
+CRYPTOBOT_REQUEST_TIMEOUT_MS=10000
 
 MALO_PLAN_PERIOD_DAYS=30
 MALO_PRICE_RUB=499.00
@@ -110,12 +124,24 @@ https://malo.up.railway.app/api/webhooks/cryptobot
 ```
 
 Crypto Pay sends an HTTPS `invoice_paid` update and retries a non-2xx response
-up to 17 times. The gateway keeps the raw request body, verifies
-`crypto-pay-api-signature` using `HMAC-SHA256(SHA256(CRYPTOBOT_TOKEN), rawBody)`,
-then fetches the provider invoice itself. Pro is granted only when the paid
-provider invoice has the same invoice ID, asset, decimal amount and
-server-generated payload as a locally issued MalO invoice. Duplicate webhook
-updates cannot extend the period twice.
+up to 17 times. It is **Crypto Pay that sends the webhook to Railway**; the
+Android app never marks an invoice paid. The gateway fails closed and grants
+Pro only after all of these checks:
+
+1. The untouched request bytes match `crypto-pay-api-signature` using
+   `HMAC-SHA256(SHA256(CRYPTOBOT_TOKEN), rawBody)`.
+2. The server fetches the invoice directly from Crypto Pay with its private
+   token; it does not trust the webhook's amount or status fields.
+3. The remote invoice ID, paid status, asset, exact decimal amount, and the
+   **byte-for-byte server-generated payload** match the stored invoice.
+4. The paid invoice and Pro entitlement are atomically persisted on the
+   Railway Volume before a 2xx acknowledgement is returned. Replays and a UI
+   polling request cannot extend the period twice.
+
+A Crypto Pay invoice is paid from the user's Crypto Bot balance; its API does
+not accept a blockchain-network parameter. The legacy `network` field in an
+older APK is retained only as a funding hint/receipt field and is never used as
+on-chain proof.
 
 Use `https://pay.crypt.bot/api` for mainnet. Set a testnet endpoint/token only
 in a separate Railway environment; never mix testnet and production state.
@@ -138,7 +164,29 @@ an APK can be extracted. Before a commercial RuStore release, protect real
 users with an authenticated account/session and enforce user ownership on the
 gateway; do not treat an APK-embedded key as a credential.
 
-## 6. Smoke test
+## 6. Commercial / RuStore release checklist
+
+This repository handles the technical payment confirmation; it does not itself
+certify legal or marketplace compliance. Before submitting a commercial build:
+
+1. Confirm the current RuStore rules for digital subscriptions and external
+   payment methods, and use the required RuStore billing flow if one applies to
+   your category. Do not represent CryptoBot as a RuStore payment method unless
+   that review permits it.
+2. Publish the price, billing period, renewal/cancellation/refund terms,
+   developer contact, privacy policy, and personal-data processing information
+   required for your audience. Keep a support path for payment disputes.
+3. Use a real account/session service before release. `MALO_CLIENT_KEY` is only
+   a deployment-pairing header: because it is present in an APK, it is not a
+   user credential and cannot establish ownership of a subscription.
+4. Keep `CRYPTOBOT_TOKEN`, YooKassa secrets, Railway Volume backups, and release
+   signing keys out of Git and out of the APK. Rotate any token ever shared in
+   a log, screenshot, or chat.
+5. Test an actual Crypto Pay invoice in a Railway **staging** environment with
+   its own token/domain/Volume. Verify the webhook-delivery log, activation,
+   duplicate delivery, cancellation, and an expired invoice before production.
+
+## 7. Smoke test
 
 ```sh
 curl https://malo.up.railway.app/api/health

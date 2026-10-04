@@ -13,6 +13,7 @@ const { createApp } = await import('../src/app.js');
 const { signCryptoBotPayload, verifyCryptoBotSignature, __mockMarkPaid } = await import('../src/providers/cryptobot.js');
 const { isTrustedYooKassaIp } = await import('../src/providers/yookassa.js');
 const { isNetworkAllowed, buildCatalog } = await import('../src/networks.js');
+const { validateCreatedCryptoInvoice } = await import('../src/routes/crypto.js');
 
 initStore();
 
@@ -84,6 +85,11 @@ test('cryptobot webhook activates Pro and is idempotent', async () => {
   assert.equal(created.status, 201);
   assert.equal(invoice.network, 'TRON');
   assert.ok(invoice.payUrl.startsWith('https://t.me/'));
+  // Android receives no internal ownership/payload values that could be reused
+  // to manufacture a different provider invoice.
+  assert.equal(invoice.payloadId, undefined);
+  assert.equal(invoice.userId, undefined);
+  assert.equal(invoice.txHash, undefined);
 
   const stored = db.getInvoice(invoice.invoiceId);
   // The webhook handler independently reads this provider invoice before granting Pro.
@@ -113,6 +119,13 @@ test('cryptobot webhook activates Pro and is idempotent', async () => {
     body: raw,
   });
   assert.equal(hook.status, 200);
+  // The webhook acknowledges only after the paid invoice + entitlement have
+  // been durably written to the Railway-compatible state file.
+  const persisted = JSON.parse(
+    fs.readFileSync(path.join(process.env.MALO_DATA_DIR, 'gateway-state.json'), 'utf8'),
+  );
+  assert.equal(persisted.invoices[String(invoice.invoiceId)].status, 'paid');
+  assert.equal(persisted.subscriptions[USER].status, 'active');
 
   const sub = await (await api(`/api/subscription?userId=${USER}`)).json();
   assert.equal(sub.subscription.status, 'active');
@@ -170,6 +183,55 @@ test('cryptobot webhook rejects a signed update when the provider invoice amount
   assert.equal(error.error.code, 'INVOICE_AMOUNT_MISMATCH');
   const subscription = await (await api(`/api/subscription?userId=${user}`)).json();
   assert.equal(subscription.subscription.status, 'inactive');
+});
+
+test('cryptobot webhook rejects an unsigned paid update even in mock mode', async () => {
+  const user = 'malo-unsigned-crypto-user';
+  const created = await api('/api/crypto/invoices', {
+    method: 'POST',
+    body: JSON.stringify({ userId: user, asset: 'USDT', network: 'TRON' }),
+  });
+  const { invoice } = await created.json();
+  __mockMarkPaid(invoice.invoiceId);
+
+  const raw = JSON.stringify({
+    update_id: 90003,
+    update_type: 'invoice_paid',
+    payload: { invoice_id: invoice.invoiceId },
+  });
+  const hook = await fetch(`${baseUrl}/api/webhooks/cryptobot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: raw,
+  });
+  assert.equal(hook.status, 401);
+  const error = await hook.json();
+  assert.equal(error.error.code, 'BAD_SIGNATURE');
+
+  const subscription = await (await api(`/api/subscription?userId=${user}`)).json();
+  assert.equal(subscription.subscription.status, 'inactive');
+});
+
+test('created Crypto Pay invoice must preserve the exact server payload', () => {
+  const payload = '{"v":1,"payloadId":"inv_123","userId":"malo-test-user","planId":"malo_pro_monthly","network":"TRON"}';
+  const expected = { asset: 'USDT', amount: '4.99', payload };
+  const valid = {
+    invoice_id: 42,
+    status: 'active',
+    asset: 'USDT',
+    amount: '4.9900',
+    payload,
+    bot_invoice_url: 'https://t.me/CryptoBot?start=42',
+  };
+  assert.equal(validateCreatedCryptoInvoice(valid, expected).ok, true);
+  assert.equal(
+    validateCreatedCryptoInvoice({ ...valid, payload: `${payload} ` }, expected).code,
+    'CREATE_RESPONSE_PAYLOAD_MISMATCH',
+  );
+  assert.equal(
+    validateCreatedCryptoInvoice({ ...valid, bot_invoice_url: 'http://not-secure.example' }, expected).code,
+    'CREATE_RESPONSE_URL_INVALID',
+  );
 });
 
 test('cryptobot signature verification rejects tampered payloads', () => {

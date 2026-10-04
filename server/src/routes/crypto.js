@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { config } from '../config.js';
 import { db, newId } from '../store.js';
 import { findAsset, isNetworkAllowed, NETWORKS } from '../networks.js';
-import { cryptobot } from '../providers/cryptobot.js';
+import { CryptoBotError, cryptobot } from '../providers/cryptobot.js';
 import { asyncRoute, requireClientKey, requireUserId } from '../middleware.js';
 import { activateSubscription, getSubscription, serializeSubscription } from '../subscriptions.js';
 
@@ -24,11 +24,54 @@ async function quoteAmount(assetCode) {
 }
 
 /** Exact decimal comparison without floating point rounding surprises. */
-function decimalUnits(value, scale = 12) {
+export function decimalUnits(value, scale = 12) {
   const match = String(value ?? '').trim().match(/^(\d+)(?:\.(\d+))?$/);
   if (!match || match[2]?.length > scale) return null;
   const fraction = (match[2] || '').padEnd(scale, '0');
   return BigInt(match[1]) * 10n ** BigInt(scale) + BigInt(fraction);
+}
+
+const sameAmount = (left, right) => {
+  const expected = decimalUnits(left);
+  const received = decimalUnits(right);
+  return expected !== null && received !== null && expected === received;
+};
+
+const isSecureUrl = (value) => {
+  try {
+    return new URL(String(value)).protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Crypto Pay has already received the expected values in createInvoice. Check
+ * its response before recording any local state: an incomplete/proxy response
+ * must never turn into an invoice that could later grant Pro.
+ */
+export function validateCreatedCryptoInvoice(remote, expected) {
+  const invoiceId = Number(remote?.invoice_id);
+  if (!Number.isSafeInteger(invoiceId) || invoiceId < 1) {
+    return { ok: false, code: 'CREATE_RESPONSE_ID_INVALID', message: 'Crypto Pay did not return a valid invoice id' };
+  }
+  if (String(remote.status || '').toLowerCase() !== 'active') {
+    return { ok: false, code: 'CREATE_RESPONSE_STATUS_INVALID', message: 'Crypto Pay invoice is not active' };
+  }
+  if (String(remote.asset || '').toUpperCase() !== String(expected.asset).toUpperCase()) {
+    return { ok: false, code: 'CREATE_RESPONSE_ASSET_MISMATCH', message: 'Crypto Pay returned another asset' };
+  }
+  if (!sameAmount(expected.amount, remote.amount)) {
+    return { ok: false, code: 'CREATE_RESPONSE_AMOUNT_MISMATCH', message: 'Crypto Pay returned another amount' };
+  }
+  if (String(remote.payload || '') !== expected.payload) {
+    return { ok: false, code: 'CREATE_RESPONSE_PAYLOAD_MISMATCH', message: 'Crypto Pay returned another invoice payload' };
+  }
+  const payUrl = remote.bot_invoice_url || remote.mini_app_invoice_url || remote.pay_url;
+  if (!isSecureUrl(payUrl)) {
+    return { ok: false, code: 'CREATE_RESPONSE_URL_INVALID', message: 'Crypto Pay did not return a secure payment URL' };
+  }
+  return { ok: true };
 }
 
 /**
@@ -47,23 +90,30 @@ export function validateCryptoInvoice(stored, remote) {
   if (String(remote.asset || '').toUpperCase() !== String(stored.asset).toUpperCase()) {
     return { ok: false, code: 'INVOICE_ASSET_MISMATCH', message: 'Crypto Pay asset does not match' };
   }
-  const expectedAmount = decimalUnits(stored.amount);
-  const receivedAmount = decimalUnits(remote.amount);
-  if (expectedAmount === null || receivedAmount === null || expectedAmount !== receivedAmount) {
+  if (!sameAmount(stored.amount, remote.amount)) {
     return { ok: false, code: 'INVOICE_AMOUNT_MISMATCH', message: 'Crypto Pay amount does not match' };
+  }
+
+  // Crypto Pay returns the exact `payload` string supplied at invoice creation.
+  // Comparing it byte-for-byte rejects fields appended/reordered by a forged or
+  // mismatched invoice; parsing is then only a defensive schema check.
+  if (!stored.payload || String(remote.payload || '') !== stored.payload) {
+    return { ok: false, code: 'INVOICE_PAYLOAD_MISMATCH', message: 'Crypto Pay invoice payload does not match' };
   }
 
   let payload = null;
   try {
-    payload = JSON.parse(String(remote.payload || ''));
+    payload = JSON.parse(stored.payload);
   } catch {
-    return { ok: false, code: 'INVOICE_PAYLOAD_INVALID', message: 'Crypto Pay payload is not valid JSON' };
+    return { ok: false, code: 'INVOICE_PAYLOAD_INVALID', message: 'Stored invoice payload is not valid JSON' };
   }
   if (
     payload?.v !== 1 ||
     payload.payloadId !== stored.payloadId ||
     payload.userId !== stored.userId ||
-    payload.planId !== config.subscription.planId ||
+    // The plan is frozen at invoice issue time. A later configuration deploy
+    // must not turn an already-paid, otherwise valid invoice into a rejection.
+    payload.planId !== stored.planId ||
     String(payload.network || '').toUpperCase() !== String(stored.network || '').toUpperCase()
   ) {
     return { ok: false, code: 'INVOICE_PAYLOAD_MISMATCH', message: 'Crypto Pay invoice payload does not match' };
@@ -91,11 +141,58 @@ export function settleCryptoInvoice(stored, remote, source) {
   const validation = validateCryptoInvoice(stored, remote);
   if (!validation.ok) return { validation };
 
+  // Persist both the entitlement and the paid invoice before the handler may
+  // acknowledge the provider. `flushNow` uses an atomic file replacement on
+  // the Railway Volume, so a restart cannot acknowledge a payment and lose it.
+  const subscription = activateCryptoSubscription(stored, source);
   stored.status = 'paid';
   stored.paidAt = remote.paid_at ? Date.parse(remote.paid_at) || Date.now() : Date.now();
   stored.txHash = remote.hash || stored.hash;
   db.saveInvoice(stored);
-  return { subscription: activateCryptoSubscription(stored, source) };
+  db.flushNow();
+  return { subscription };
+}
+
+// The shipped JSON store is intentionally a single-Railway-instance store. A
+// per-invoice promise lock also serialises a UI poll and a webhook that arrive
+// in the same event-loop tick, preventing an entitlement from being extended
+// twice before `stored.status` has been observed as paid.
+const settlementLocks = new Map();
+
+export async function settleCryptoInvoiceOnce(stored, remote, source) {
+  const key = String(stored.invoiceId);
+  const active = settlementLocks.get(key);
+  if (active) return active;
+
+  const task = Promise.resolve().then(() => settleCryptoInvoice(stored, remote, source));
+  settlementLocks.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (settlementLocks.get(key) === task) settlementLocks.delete(key);
+  }
+}
+
+/** Keep provider/internal fields out of the Android API response. */
+export function publicCryptoInvoice(invoice) {
+  if (!invoice) return null;
+  return {
+    invoiceId: invoice.invoiceId,
+    asset: invoice.asset,
+    // Crypto Pay invoices are paid from the Crypto Bot balance. The old client
+    // field remains for backwards compatibility, but is only an app-selected
+    // funding hint and never a chain transaction confirmation.
+    network: invoice.network,
+    networkTitle: invoice.networkTitle,
+    amount: invoice.amount,
+    status: invoice.status,
+    payUrl: invoice.payUrl,
+    miniAppUrl: invoice.miniAppUrl,
+    webAppUrl: invoice.webAppUrl,
+    createdAt: invoice.createdAt,
+    expiresAt: invoice.expiresAt,
+    paidAt: invoice.paidAt,
+  };
 }
 
 /* ------------------------------------------------------------ create ----- */
@@ -125,10 +222,9 @@ cryptoRouter.post(
       throw Object.assign(new Error('Crypto Pay exchange rate is temporarily unavailable'), {
         status: 502,
         code: 'RATE_UNAVAILABLE',
-        details: error.message,
       });
     }
-    if (!amount || Number(amount) <= 0) {
+    if (!amount || !sameAmount(amount, amount) || Number(amount) <= 0) {
       return res.status(502).json({ ok: false, error: { code: 'RATE_UNAVAILABLE', message: 'Exchange rate is temporarily unavailable' } });
     }
 
@@ -142,16 +238,26 @@ cryptoRouter.post(
       hiddenMessage: 'Подписка MalO Pro активирована. Возвращайся в приложение — я уже жду. 💜',
     });
 
+    const created = validateCreatedCryptoInvoice(remote, { asset: asset.asset, amount, payload });
+    if (!created.ok) {
+      throw new CryptoBotError(created.message, { status: 502, code: created.code });
+    }
+
     const invoice = {
       invoiceId: remote.invoice_id,
       payloadId,
+      payload,
       userId: req.userId,
+      planId: config.subscription.planId,
       asset: asset.asset,
+      // Crypto Pay settles its own wallet balance and does not accept a chain
+      // parameter for an invoice. Retain the app hint for older APKs only; it
+      // is never treated as an on-chain payment proof.
       network,
       networkTitle: NETWORKS[network]?.title || network,
       amount,
-      status: String(remote.status || 'active').toLowerCase(),
-      payUrl: remote.bot_invoice_url || remote.pay_url,
+      status: 'active',
+      payUrl: remote.bot_invoice_url || remote.mini_app_invoice_url || remote.pay_url,
       miniAppUrl: remote.mini_app_invoice_url || null,
       webAppUrl: remote.web_app_invoice_url || null,
       hash: remote.hash || null,
@@ -161,7 +267,8 @@ cryptoRouter.post(
       txHash: null,
     };
     db.saveInvoice(invoice);
-    return res.status(201).json({ ok: true, invoice });
+    db.flushNow();
+    return res.status(201).json({ ok: true, invoice: publicCryptoInvoice(invoice) });
   }),
 );
 
@@ -182,13 +289,17 @@ cryptoRouter.get(
     if (stored.status === 'active') {
       const remote = await cryptobot.getInvoice(stored.invoiceId);
       if (remote && String(remote.status || '').toLowerCase() === 'paid') {
-        const settled = settleCryptoInvoice(stored, remote, 'poll');
+        const settled = await settleCryptoInvoiceOnce(stored, remote, 'poll');
         if (settled.validation) {
           return res.status(409).json({ ok: false, error: settled.validation });
         }
       }
     }
-    return res.json({ ok: true, invoice: stored, subscription: serializeSubscription(getSubscription(stored.userId)) });
+    return res.json({
+      ok: true,
+      invoice: publicCryptoInvoice(stored),
+      subscription: serializeSubscription(getSubscription(stored.userId)),
+    });
   }),
 );
 
@@ -197,6 +308,9 @@ cryptoRouter.get(
   requireClientKey,
   requireUserId,
   asyncRoute(async (req, res) => {
-    res.json({ ok: true, invoices: db.listInvoices(req.userId).sort((a, b) => b.createdAt - a.createdAt) });
+    res.json({
+      ok: true,
+      invoices: db.listInvoices(req.userId).sort((a, b) => b.createdAt - a.createdAt).map(publicCryptoInvoice),
+    });
   }),
 );

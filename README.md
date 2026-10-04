@@ -62,9 +62,10 @@ that Railway runs alongside the APK download page:
   it never creates a locally saved card or silently enables auto-renewal.
 * **Telegram CryptoBot** — an additional Crypto Pay option. The server creates
   a fixed invoice for the plan price and opens its `bot_invoice_url` / Mini App
-  URL. The signed `invoice_paid` webhook is followed by a provider API lookup;
-  invoice ID, status, asset, decimal amount and server-issued payload must all
-  match before Pro is activated.
+  URL. Crypto Pay sends the signed `invoice_paid` webhook to Railway; the app
+  never self-confirms an invoice. The gateway refetches the provider invoice,
+  then requires invoice ID, paid status, asset, exact decimal amount and the
+  byte-for-byte server-issued payload to match before Pro is activated.
 * **«Мои карты»** — a dedicated mini-app-style submenu with a horizontal swipe
   pager. It mirrors only the scheme, masked number, expiry, and selected-card
   state received from the gateway. Users can swipe to a card, choose it for

@@ -15,7 +15,7 @@ import { cryptobot, verifyCryptoBotSignature } from '../providers/cryptobot.js';
 import { isTrustedYooKassaIp } from '../providers/yookassa.js';
 import { asyncRoute } from '../middleware.js';
 import { activateSubscription, getSubscription } from '../subscriptions.js';
-import { settleCryptoInvoice } from './crypto.js';
+import { settleCryptoInvoiceOnce } from './crypto.js';
 import { upsertCardFromPaymentMethod } from './cards.js';
 import { logWebhook } from '../logger.js';
 
@@ -38,7 +38,10 @@ webhooksRouter.post(
     // express.raw() before the JSON parser; never stringify/reformat first.
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''), 'utf8');
     const signature = req.get('crypto-pay-api-signature');
-    if (!config.mockProviders && !verifyCryptoBotSignature(raw, signature)) {
+    // This check is deliberately required in mock mode too. A mock provider is
+    // useful for automated tests, but it must never turn a production webhook
+    // endpoint into an unsigned "grant Pro" endpoint.
+    if (!verifyCryptoBotSignature(raw, signature)) {
       logWebhook('cryptobot', 'rejected', 'bad signature');
       return res.status(401).json({ ok: false, error: { code: 'BAD_SIGNATURE' } });
     }
@@ -70,14 +73,18 @@ webhooksRouter.post(
       error.code = 'CRYPTOBOT_INVOICE_UNAVAILABLE';
       throw error;
     }
-    const settled = settleCryptoInvoice(stored, remote, 'webhook');
+    const settled = await settleCryptoInvoiceOnce(stored, remote, 'webhook');
     if (settled.validation) {
       logWebhook('cryptobot', 'rejected', `${settled.validation.code} invoice=${stored.invoiceId}`);
       return res.status(409).json({ ok: false, error: settled.validation });
     }
 
     db.markWebhook(dedupeKey);
-    logWebhook('cryptobot', 'invoice_paid', `invoice=${stored.invoiceId} ${stored.amount} ${stored.asset} via ${stored.network}`);
+    // `settleCryptoInvoiceOnce` durably stores the entitlement; flush the
+    // replay marker too before returning 2xx, since Crypto Pay may stop retrying
+    // as soon as it receives this response.
+    db.flushNow();
+    logWebhook('cryptobot', 'invoice_paid', `invoice=${stored.invoiceId} ${stored.amount} ${stored.asset}`);
     return res.json({ ok: true, duplicate: Boolean(settled.duplicate) });
   }),
 );

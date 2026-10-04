@@ -22,16 +22,19 @@ const EMPTY = {
 let state = structuredClone(EMPTY);
 let filePath = null;
 let writeQueued = false;
+let writeTimer = null;
 
 export function initStore(dir = config.dataDir) {
   const resolved = path.resolve(dir);
-  fs.mkdirSync(resolved, { recursive: true });
+  fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
   filePath = path.join(resolved, 'gateway-state.json');
   if (fs.existsSync(filePath)) {
     try {
       state = { ...structuredClone(EMPTY), ...JSON.parse(fs.readFileSync(filePath, 'utf8')) };
+      fs.chmodSync(filePath, 0o600);
     } catch {
       state = structuredClone(EMPTY);
+      flush();
     }
   } else {
     state = structuredClone(EMPTY);
@@ -42,31 +45,65 @@ export function initStore(dir = config.dataDir) {
 
 export function resetStore() {
   state = structuredClone(EMPTY);
-  if (filePath) flush();
+  if (filePath) flushNow();
 }
 
+/**
+ * Write to a sibling temporary file and rename it into place. POSIX rename is
+ * atomic on Railway's mounted Linux Volume, so a restart cannot leave a
+ * half-written JSON file after a confirmed payment.
+ */
 function flush() {
   if (!filePath) return;
-  fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+  const temporary = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(state, null, 2), { mode: 0o600 });
+    fs.renameSync(temporary, filePath);
+    fs.chmodSync(filePath, 0o600);
+  } finally {
+    // If write/rename threw, do not leave sensitive card-token state in a temp
+    // file that may be included in a future Volume backup.
+    try {
+      if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
+    } catch {
+      /* best effort cleanup */
+    }
+  }
 }
 
 function persist() {
   if (!filePath || writeQueued) return;
   writeQueued = true;
-  setTimeout(() => {
+  writeTimer = setTimeout(() => {
     writeQueued = false;
+    writeTimer = null;
     try {
       flush();
     } catch {
-      /* best effort */
+      /* best effort for non-payment UI state */
     }
   }, 50);
+}
+
+/** Flush the current in-memory state before a payment webhook receives 2xx. */
+function flushNow() {
+  if (!filePath) return;
+  if (writeTimer) clearTimeout(writeTimer);
+  writeTimer = null;
+  writeQueued = false;
+  flush();
 }
 
 export const db = {
   get raw() {
     return state;
   },
+
+  /**
+   * Durability boundary for confirmed payment/entitlement changes. Do not call
+   * this in every UI read; callers use it immediately before a webhook 2xx.
+   */
+  flushNow,
 
   /* ---------------------------------------------------------- subscriptions */
   getSubscription(userId) {

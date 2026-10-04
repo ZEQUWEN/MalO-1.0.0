@@ -1,7 +1,7 @@
 /**
  * CryptoBot (Telegram @CryptoBot) — Crypto Pay API client + webhook verifier.
  *
- * Docs: https://help.crypt.bot/crypto-pay-api
+ * Current docs: https://help.send.tg/en/articles/10279948-crypto-pay-api
  *
  * Webhook signature scheme used by Crypto Pay:
  *   secret    = SHA256(app_token)
@@ -23,8 +23,8 @@ export class CryptoBotError extends Error {
 }
 
 async function call(method, params = {}) {
-  if (config.mockProviders) return mockCall(method, params);
-
+  // A token is necessary even in mock mode: webhook verification must never be
+  // disabled just because a Railway variable was set incorrectly.
   if (!config.cryptobot.token) {
     throw new CryptoBotError('CRYPTOBOT_TOKEN is not configured', {
       status: 503,
@@ -32,14 +32,26 @@ async function call(method, params = {}) {
     });
   }
 
-  const response = await fetch(`${config.cryptobot.apiBase}/${method}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Crypto-Pay-API-Token': config.cryptobot.token,
-    },
-    body: JSON.stringify(params),
-  });
+  if (config.mockProviders) return mockCall(method, params);
+
+  let response;
+  try {
+    response = await fetch(`${config.cryptobot.apiBase}/${method}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Crypto-Pay-API-Token': config.cryptobot.token,
+      },
+      body: JSON.stringify(params),
+      signal: AbortSignal.timeout(config.cryptobot.requestTimeoutMs),
+    });
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    throw new CryptoBotError(timedOut ? `Crypto Pay ${method} timed out` : `Crypto Pay ${method} is unavailable`, {
+      status: 502,
+      code: timedOut ? 'CRYPTOBOT_TIMEOUT' : 'CRYPTOBOT_UNAVAILABLE',
+    });
+  }
 
   let body;
   try {
@@ -51,6 +63,11 @@ async function call(method, params = {}) {
   if (!response.ok || body.ok === false) {
     throw new CryptoBotError(body?.error?.name || `Crypto Pay ${method} failed`, {
       details: body?.error ?? body,
+    });
+  }
+  if (!Object.hasOwn(body || {}, 'result')) {
+    throw new CryptoBotError(`Crypto Pay ${method}: response has no result`, {
+      code: 'CRYPTOBOT_BAD_RESPONSE',
     });
   }
   return body.result;
@@ -150,24 +167,28 @@ export const cryptobot = {
 /* ------------------------------------------------------------- signature -- */
 
 /**
- * Verifies a Crypto Pay webhook delivery.
+ * Verifies a Crypto Pay webhook delivery using the exact bytes received over
+ * HTTP. Do not parse and re-stringify the JSON before this check: whitespace
+ * or key order would invalidate the provider signature.
  *
  * @param {Buffer|string} rawBody exact bytes received on the wire
  * @param {string} signatureHeader value of `crypto-pay-api-signature`
  * @param {string} [token] override (tests)
  */
 export function verifyCryptoBotSignature(rawBody, signatureHeader, token = config.cryptobot.token) {
-  if (!token || !signatureHeader) return false;
+  const signature = String(signatureHeader || '').trim().toLowerCase();
+  if (!token || !/^[a-f0-9]{64}$/.test(signature)) return false;
+
   const secret = crypto.createHash('sha256').update(token).digest();
   const expected = crypto
     .createHmac('sha256', secret)
     .update(Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8'))
-    .digest('hex');
+    .digest();
 
-  const received = Buffer.from(String(signatureHeader).trim(), 'utf8');
-  const expectedBuf = Buffer.from(expected, 'utf8');
-  if (received.length !== expectedBuf.length) return false;
-  return crypto.timingSafeEqual(received, expectedBuf);
+  // Decode rather than compare strings so timingSafeEqual always receives two
+  // equal-size byte arrays. Invalid/non-hex headers are rejected above.
+  const received = Buffer.from(signature, 'hex');
+  return received.length === expected.length && crypto.timingSafeEqual(received, expected);
 }
 
 /** Convenience used by docs/tests to produce a valid signature. */
