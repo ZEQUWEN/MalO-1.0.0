@@ -52,9 +52,8 @@ Never commit real keys or put them in the Android `.env` file.
 MALO_PUBLIC_URL=https://malo.up.railway.app
 MALO_DATA_DIR=/app/.data
 
-# Required in production. Use at least 32 random bytes and put the same value
-# in the *release-build environment*, never in Git. This is deployment pairing,
-# not end-user authentication (APK strings can be extracted).
+# Required in production. Use at least 32 random bytes. This is deployment
+# pairing, not end-user authentication (APK strings can be extracted).
 MALO_CLIENT_KEY=<long-random-value>
 MALO_MOCK_PROVIDERS=0
 
@@ -74,6 +73,20 @@ MALO_PLAN_PERIOD_DAYS=30
 MALO_PRICE_RUB=499.00
 MALO_PRICE_USD=4.99
 ```
+
+### Android gateway build values
+
+The hosted APK must contain the same `MALO_GATEWAY_URL` and `MALO_CLIENT_KEY`
+as the running gateway. The repository Dockerfile declares those two Railway
+Variables as build arguments and writes them to a temporary `.env` only while
+Gradle builds the APK. Therefore, after adding or changing either value, trigger
+a **new deployment that rebuilds the image**; a runtime restart alone does not
+replace the APK in `public/`.
+
+Do **not** commit or upload a root `.env` file to GitHub. It is intentionally
+excluded from the Docker build context. Keep `CRYPTOBOT_TOKEN`, YooKassa keys,
+and all other provider secrets runtime-only — they are never build arguments
+and must never be compiled into the APK.
 
 > **Persistence is mandatory.** `/app/.data` contains opaque provider-issued card
 > tokens, subscription state, processed webhook IDs, and pending payments. A

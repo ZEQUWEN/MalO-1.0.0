@@ -91,12 +91,17 @@ https://malo.up.railway.app/api/webhooks/cryptobot
 `GET /api/webhooks` prints the runtime URLs. Full Railway variables, volume,
 webhook, and smoke-test instructions are in [DEPLOY.md](DEPLOY.md).
 
-Point the app at the gateway via `.env`:
+For a **local** APK build, point the app at the gateway via an untracked `.env`:
 
 ```sh
 MALO_GATEWAY_URL=https://malo.up.railway.app
 MALO_CLIENT_KEY=<same value as on the gateway>
 ```
+
+For the APK built by Railway's Dockerfile, set those two values in Railway
+**Variables** instead. The Dockerfile opts them into the build as arguments, so
+changing either value requires a new image build/deployment. Never commit `.env`
+or any provider secret to GitHub.
 
 Setting `MALO_GATEWAY_URL=MY_MALO_GATEWAY_URL` disables checkout in that build;
 it never replaces a real payment with a demo card transaction.

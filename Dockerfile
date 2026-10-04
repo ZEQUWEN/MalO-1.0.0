@@ -26,7 +26,26 @@ RUN yes | sdkmanager --licenses >/dev/null \
 
 WORKDIR /workspace
 COPY . .
-RUN chmod +x build.sh start.sh && ./build.sh
+
+# Railway only passes service variables into a Docker build when the Dockerfile
+# explicitly declares matching ARGs. These two values are compiled into the
+# Android APK so it can reach the same gateway as the runtime service. They are
+# a deployment-pairing value, not a substitute for user authentication. Keep
+# provider secrets (especially CRYPTOBOT_TOKEN) runtime-only: never add them
+# as Docker build args or to an APK.
+ARG MALO_GATEWAY_URL
+ARG MALO_CLIENT_KEY
+
+# `.env` is deliberately excluded from the Docker build context. Start with
+# non-secret defaults, then append Railway's build-time gateway variables in
+# this *single* layer. The temporary file is deleted after Gradle has generated
+# BuildConfig, and the final runtime image contains only the generated APK.
+RUN cp .env.example .env \
+    && if [ -n "$MALO_GATEWAY_URL" ]; then printf '\nMALO_GATEWAY_URL=%s\n' "$MALO_GATEWAY_URL" >> .env; fi \
+    && if [ -n "$MALO_CLIENT_KEY" ]; then printf 'MALO_CLIENT_KEY=%s\n' "$MALO_CLIENT_KEY" >> .env; fi \
+    && chmod +x build.sh start.sh \
+    && ./build.sh \
+    && rm -f .env
 
 FROM node:20-alpine AS runtime
 
