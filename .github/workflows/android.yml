@@ -45,7 +45,40 @@ jobs:
           "${GRADLE_USER_HOME:-$GITHUB_WORKSPACE/.gradle}/bootstrap/gradle-9.3.1/bin/gradle" \
             --no-daemon --console=plain :app:testDebugUnitTest
 
+      - name: Report unit-test failures
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          def escape(value: str) -> str:
+              return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+          for report in pathlib.Path("app/build/test-results").rglob("TEST-*.xml"):
+              root = ET.parse(report).getroot()
+              for case in root.iter("testcase"):
+                  for tag in ("failure", "error"):
+                      problem = case.find(tag)
+                      if problem is None:
+                          continue
+                      title = f"{case.get('classname', '')}.{case.get('name', '')}"
+                      details = problem.get("message") or problem.text or "Unit test failed"
+                      print(f"::error title={escape(title)}::{escape(details[:3000])}")
+          PY
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: MalO-test-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: warn
+
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: MalO-debug-apk
