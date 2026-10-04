@@ -1,21 +1,55 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# MalO 1.0.0
 
-# Run and deploy your AI Studio app
+MalO is an Android application. A Railway deployment cannot run an APK directly;
+it builds the APK and serves a small download page with the package.
 
-This contains everything you need to run your app locally.
+## Build an APK locally
 
-View your app in AI Studio: https://ai.studio/apps/407bacaa-2d84-4faa-a8e6-15f2f9b8a8b0
+The build requires:
 
-## Run Locally
+- JDK **17**;
+- Android SDK Platform **36** and Build Tools **36.0.0**;
+- `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) pointing to that SDK, or `sdk.dir` in
+  `local.properties`.
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+Run:
 
+```sh
+chmod +x build.sh start.sh
+./build.sh
+```
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+`build.sh` downloads the pinned Gradle 9.3.1 distribution on its first run,
+checks its SHA-256 checksum, and creates a debug APK. The resulting files are:
+
+- `public/MalO-1.0.0.apk` — primary download;
+- `public/app-debug.apk` — compatibility mirror for the download page.
+
+For a local check of the distribution page, run:
+
+```sh
+PORT=8080 ./start.sh
+```
+
+## Deploy to Railway
+
+The repository contains `railway.json` with `builder: "DOCKERFILE"`. Do not
+set a custom Railpack/Nixpacks build command in the Railway service: Railway
+must use the repository `Dockerfile`.
+
+The Docker build stage installs JDK 17, Android command-line tools, Android API
+36, and Build Tools 36.0.0; then it calls `./build.sh`. The final lightweight
+image only starts `./start.sh`, which listens on Railway's `$PORT` and serves
+the contents of `public/`.
+
+After pushing these files, create a new deployment from the same repository and
+branch. If the Railway log still lists only `app/`, `assets/`, and Gradle files
+and says `start.sh not found`, that service is building a different commit,
+branch, or root directory: the tracked `start.sh`, `build.sh`, `Dockerfile`,
+and `railway.json` must be visible at the deployment root.
+
+## API key
+
+`.env.example` provides a placeholder `GEMINI_API_KEY` so that the APK builds
+without committing a secret. For local development, copy it to `.env` and put
+your own key there. Do not commit `.env` or a signing keystore.

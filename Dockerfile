@@ -1,18 +1,39 @@
-FROM python:3.11-alpine
+# Build the Android package in a JDK/Android-SDK image, then serve only the
+# distribution files. Railway therefore never has to guess the project type.
+FROM eclipse-temurin:17-jdk-jammy AS builder
+
+ENV ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    ANDROID_CMDLINE_TOOLS_VERSION=11076708
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && curl --fail --location --retry 3 --silent --show-error \
+      "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_VERSION}_latest.zip" \
+      --output /tmp/android-commandline-tools.zip \
+    && unzip -q /tmp/android-commandline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest" \
+    && rm /tmp/android-commandline-tools.zip
+
+ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
+
+RUN yes | sdkmanager --licenses >/dev/null \
+    && sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+WORKDIR /workspace
+COPY . .
+RUN chmod +x build.sh start.sh && ./build.sh
+
+FROM python:3.12-alpine AS runtime
 
 WORKDIR /app
-
-RUN apk add --no-cache bash curl
-
-COPY public/ /app/public/
-COPY .build-outputs/ /app/.build-outputs/
+COPY --from=builder /workspace/public /app/public
 COPY start.sh /app/start.sh
-COPY build.sh /app/build.sh
 
-RUN chmod +x /app/start.sh /app/build.sh && sh /app/build.sh
-
-EXPOSE 8080
+RUN chmod +x /app/start.sh
 
 ENV PORT=8080
-
-CMD ["sh", "/app/start.sh"]
+EXPOSE 8080
+CMD ["./start.sh"]

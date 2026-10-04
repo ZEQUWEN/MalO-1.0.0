@@ -1,0 +1,13 @@
+# Do not send development/build caches or secrets to Railway's Docker builder.
+.git
+.gradle
+.kotlin
+.idea
+app/build
+build
+.env
+local.properties
+*.iml
+
+# APKs in public are generated again by build.sh in the builder stage.
+public/*.apk
