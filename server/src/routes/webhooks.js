@@ -16,6 +16,7 @@ import { verifyCryptoBotSignature } from '../providers/cryptobot.js';
 import { isTrustedYooKassaIp } from '../providers/yookassa.js';
 import { activateSubscription, getSubscription } from '../subscriptions.js';
 import { upsertCardFromPaymentMethod } from './cards.js';
+import { logWebhook } from '../logger.js';
 
 export const webhooksRouter = Router();
 
@@ -34,6 +35,7 @@ webhooksRouter.post('/webhooks/cryptobot', (req, res) => {
   const signature = req.get('crypto-pay-api-signature');
 
   if (!config.mockProviders && !verifyCryptoBotSignature(raw, signature)) {
+    logWebhook('cryptobot', 'rejected', 'bad signature');
     return res.status(401).json({ ok: false, error: { code: 'BAD_SIGNATURE' } });
   }
 
@@ -82,6 +84,8 @@ webhooksRouter.post('/webhooks/cryptobot', (req, res) => {
     db.saveInvoice(stored);
   }
 
+  logWebhook('cryptobot', 'invoice_paid', `invoice=${payloadInvoice.invoice_id} ${amount} ${asset} via ${network || 'AUTO'}`);
+
   activateSubscription({
     userId,
     paymentMethod: `CRYPTO:${asset}:${network || 'AUTO'}`,
@@ -105,6 +109,7 @@ webhooksRouter.post('/webhooks/yookassa', (req, res) => {
     const remote =
       (req.get('x-forwarded-for') || '').split(',')[0].trim() || req.socket?.remoteAddress || '';
     if (!isTrustedYooKassaIp(remote)) {
+      logWebhook('yookassa', 'rejected', `untrusted source ${remote}`);
       return res.status(401).json({ ok: false, error: { code: 'UNTRUSTED_SOURCE' } });
     }
   }
@@ -131,6 +136,7 @@ webhooksRouter.post('/webhooks/yookassa', (req, res) => {
 
   switch (notification.event) {
     case 'payment.succeeded': {
+      logWebhook('yookassa', 'payment.succeeded', `payment=${object.id} ${object.amount?.value ?? ''} ${object.amount?.currency ?? ''}`);
       const wantsSave = stored ? stored.saveCard : object.metadata?.saveCard === 'true';
       const card = wantsSave ? upsertCardFromPaymentMethod(userId, object.payment_method) : null;
       activateSubscription({

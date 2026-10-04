@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { initStore } from './store.js';
-import { createApp } from './app.js';
+import { createApp, webhookUrls } from './app.js';
 
 initStore();
 
@@ -8,9 +8,15 @@ const app = createApp();
 
 app.listen(config.port, '0.0.0.0', () => {
   console.log(`[malo-gateway] listening on 0.0.0.0:${config.port}`);
+  console.log(`[malo-gateway] public url: ${config.publicUrl}`);
   console.log(`[malo-gateway] mock providers: ${config.mockProviders}`);
-  if (config.publicUrl) {
-    console.log(`[malo-gateway] cryptobot webhook: ${config.publicUrl}/api/webhooks/cryptobot`);
-    console.log(`[malo-gateway] yookassa webhook:  ${config.publicUrl}/api/webhooks/yookassa`);
+  const hooks = webhookUrls();
+  console.log(`[malo-gateway] cryptobot webhook: ${hooks.cryptobot}`);
+  console.log(`[malo-gateway] yookassa webhook:  ${hooks.yookassa}`);
+  if (!config.cryptobot.token) {
+    console.log('[malo-gateway] note: CRYPTOBOT_TOKEN is not set — crypto checkout is disabled.');
+  }
+  if (!config.yookassa.shopId || !config.yookassa.secretKey) {
+    console.log('[malo-gateway] note: YOOKASSA_SHOP_ID/SECRET_KEY are not set — card checkout is disabled.');
   }
 });

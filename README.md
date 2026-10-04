@@ -70,15 +70,26 @@ JCB / Maestro) is detected live from the typed BIN and its logo is drawn with
 Compose primitives — see `app/src/main/java/com/example/payments/CardBrand.kt`
 and `app/src/main/java/com/example/ui/payments/`.
 
+The production deployment lives at **https://malo.up.railway.app**, so the
+webhooks to register with the providers are:
+
+```
+https://malo.up.railway.app/api/webhooks/cryptobot
+https://malo.up.railway.app/api/webhooks/yookassa
+```
+
+`GET /api/webhooks` prints that cheat-sheet at runtime. Full instructions
+(Railway variables, volume, smoke tests) are in [DEPLOY.md](DEPLOY.md).
+
 Point the app at the gateway via `.env`:
 
 ```sh
-MALO_GATEWAY_URL=https://your-malo-gateway.up.railway.app
+MALO_GATEWAY_URL=https://malo.up.railway.app
 MALO_CLIENT_KEY=<same value as on the gateway>
 ```
 
-With placeholder values the APK builds in offline/demo mode and falls back to
-the bundled `SubscriptionValidator`.
+Setting `MALO_GATEWAY_URL=MY_MALO_GATEWAY_URL` builds an offline/demo APK that
+falls back to the bundled `SubscriptionValidator`.
 
 ## API keys
 

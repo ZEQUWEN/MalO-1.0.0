@@ -4,6 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MalO ver. 1.0.0 | SCP-1471 Android APK</title>
+    <meta name="description" content="MalO ver. 1.0.0 — интерактивное приложение-чат с цифровой сущностью SCP-1471. Скачать APK для Android 8.0+.">
+    <meta name="theme-color" content="#0B0A10">
+
+    <!-- Icons. Browsers request /favicon.ico implicitly; shipping it keeps the
+         server log free of 404s. -->
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/site.webmanifest">
+
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="MalO ver. 1.0.0 — SCP-1471">
+    <meta property="og:description" content="Интерактивный чат с цифровой сущностью SCP-1471. APK для Android 8.0+.">
+    <meta property="og:image" content="/icon-512.png">
     <style>
         :root {
             --bg: #0B0A10;
@@ -70,7 +85,11 @@
         }
 
         .avatar-icon {
-            font-size: 54px;
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            object-fit: cover;
+            display: block;
         }
 
         .status-dot {
@@ -298,7 +317,7 @@
 <div class="container">
     <div class="header">
         <div class="avatar-wrap">
-            <span class="avatar-icon">🐺</span>
+            <img class="avatar-icon" src="/icon-192.png" width="96" height="96" alt="MalO" />
         </div>
         <div class="title">MalO ver. 1.0.0</div>
         <div class="subtitle">SCP-1471 Digital Entity Interaction App</div>

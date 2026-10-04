@@ -35,13 +35,17 @@ npm test                 # 9 tests, node:test
 | CryptoBot | `POST /api/webhooks/cryptobot`           | `crypto-pay-api-signature` = `HMAC_SHA256(SHA256(token), rawBody)` |
 | ЮKassa    | `POST /api/webhooks/yookassa`            | source IP against YooKassa's published subnets (`YOOKASSA_VERIFY_NETWORK=1`) |
 
-Register them in:
+For the production deployment (`MALO_PUBLIC_URL`, default
+`https://malo.up.railway.app`) register:
 
 * **CryptoBot** → `@CryptoBot` → *Crypto Pay* → *My Apps* → *Webhooks* →
-  `https://<host>/api/webhooks/cryptobot`
+  `https://malo.up.railway.app/api/webhooks/cryptobot`
 * **ЮKassa** → dashboard → *Интеграция* → *HTTP-уведомления* →
-  `https://<host>/api/webhooks/yookassa`, events `payment.succeeded`,
-  `payment.canceled`, `refund.succeeded`.
+  `https://malo.up.railway.app/api/webhooks/yookassa`, events
+  `payment.succeeded`, `payment.canceled`, `refund.succeeded`.
+
+`GET /api/webhooks` returns exactly these URLs at runtime, and they are printed
+on startup — see [../DEPLOY.md](../DEPLOY.md).
 
 Both handlers:
 
@@ -58,6 +62,7 @@ and require the `X-MalO-Client-Key` header when `MALO_CLIENT_KEY` is set.
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET`  | `/api/health` | liveness + which providers are configured |
+| `GET`  | `/api/webhooks` | the exact webhook URLs to register with each provider |
 | `GET`  | `/api/catalog` | plan price, accepted card brands, crypto asset/network matrix |
 | `POST` | `/api/crypto/invoices` | create a CryptoBot invoice (`asset`, `network`) |
 | `GET`  | `/api/crypto/invoices/:id` | poll invoice status (fallback for a late webhook) |

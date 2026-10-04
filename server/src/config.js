@@ -23,8 +23,11 @@ export const config = {
   /** Shared secret the Android client sends in the `X-MalO-Client-Key` header. */
   clientKey: process.env.MALO_CLIENT_KEY || '',
 
-  /** Public base URL of this gateway, used to build webhook/return URLs. */
-  publicUrl: (process.env.MALO_PUBLIC_URL || '').replace(/\/+$/, ''),
+  /**
+   * Public base URL of this gateway, used to build webhook/return URLs.
+   * Defaults to the production Railway domain of the MalO service.
+   */
+  publicUrl: (process.env.MALO_PUBLIC_URL || 'https://malo.up.railway.app').replace(/\/+$/, ''),
 
   subscription: {
     planId: 'malo_pro_monthly',
