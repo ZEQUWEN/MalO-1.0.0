@@ -1,9 +1,6 @@
 package com.example.data
 
-import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
-import androidx.room.Query
+import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -11,6 +8,9 @@ interface WordFormDao {
 
     @Query("SELECT COUNT(*) FROM word_forms")
     suspend fun getCount(): Int
+
+    @Query("SELECT * FROM word_forms WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): WordForm?
 
     @Query("SELECT * FROM word_forms WHERE language = :language AND wordForm = :surfaceForm LIMIT 1")
     suspend fun findByWordForm(language: String, surfaceForm: String): WordForm?
@@ -31,10 +31,25 @@ interface WordFormDao {
     fun getAllForLanguageFlow(language: String): Flow<List<WordForm>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertWordForms(forms: List<WordForm>)
+    suspend fun insertWordForms(forms: List<WordForm>): List<Long>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWordForm(form: WordForm): Long
+
+    @Update
+    suspend fun updateWordForm(form: WordForm): Int
+
+    @Update
+    suspend fun updateWordForms(forms: List<WordForm>): Int
+
+    @Delete
+    suspend fun deleteWordForm(form: WordForm): Int
+
+    @Delete
+    suspend fun deleteWordForms(forms: List<WordForm>): Int
+
+    @Query("DELETE FROM word_forms WHERE id = :id")
+    suspend fun deleteById(id: Long): Int
 
     @Query("DELETE FROM word_forms")
     suspend fun clearAll()

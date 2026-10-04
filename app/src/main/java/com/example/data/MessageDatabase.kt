@@ -22,6 +22,7 @@ abstract class MessageDatabase : RoomDatabase() {
     abstract fun wordFormDao(): WordFormDao
     abstract fun grammaticalRuleDao(): GrammaticalRuleDao
     abstract fun contextualAssociationDao(): ContextualAssociationDao
+    abstract fun languageCorpusDao(): LanguageCorpusDao
 
     companion object {
         @Volatile
