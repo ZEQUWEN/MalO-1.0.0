@@ -90,6 +90,13 @@ fun ChatScreen(viewModel: ChatViewModel) {
     val quickReplies by viewModel.quickReplies.collectAsState()
     val generatedPhotoPreview by viewModel.generatedPhotoPreview.collectAsState()
     val isProUser by viewModel.isProUser.collectAsState()
+    val maloMoodColor by viewModel.maloMoodColor.collectAsState()
+    val personaStyle by viewModel.maloPersonaStyle.collectAsState()
+    val animatedMoodColor by animateColorAsState(
+        targetValue = maloMoodColor,
+        animationSpec = tween(durationMillis = 1500, easing = LinearOutSlowInEasing),
+        label = "malo_mood_color"
+    )
 
     var showPaywall by remember { mutableStateOf(false) }
 
@@ -374,26 +381,47 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                     )
                                 }
                             }
-                            val maloMoodColor by viewModel.maloMoodColor.collectAsState()
-                            val personaStyle by viewModel.maloPersonaStyle.collectAsState()
-                            val animatedMoodColor by animateColorAsState(
-                                targetValue = maloMoodColor,
-                                animationSpec = tween(durationMillis = 1500, easing = LinearOutSlowInEasing)
-                            )
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isTyping) scpNeonPurple else animatedMoodColor)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (isTyping) "печет ответ..." else "активна",
-                                    color = Color.Gray,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
+                                if (isTyping) {
+                                    val topBeaconTransition = rememberInfiniteTransition(label = "top_beacon")
+                                    val beaconAlpha by topBeaconTransition.animateFloat(
+                                        initialValue = 0.3f,
+                                        targetValue = 1f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(500, easing = FastOutSlowInEasing),
+                                            repeatMode = RepeatMode.Reverse
+                                        ),
+                                        label = "beacon_alpha"
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(animatedMoodColor.copy(alpha = beaconAlpha))
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "печатает ответ...",
+                                        color = animatedMoodColor,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(animatedMoodColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "активна",
+                                        color = Color.Gray,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "•",
@@ -1245,7 +1273,10 @@ fun ChatScreen(viewModel: ChatViewModel) {
 
                                     if (isTyping) {
                                         item {
-                                            MalOTypingBubble(scpCardMalo, scpNeonPurple)
+                                            MalOTypingBubble(
+                                                cardBg = scpCardMalo,
+                                                accentColor = animatedMoodColor
+                                            )
                                         }
                                     }
                                 }
@@ -1904,84 +1935,7 @@ fun MessageBubble(
 
 
 
-@Composable
-fun MalOTypingBubble(cardBg: Color, accentColor: Color) {
-    val transition = rememberInfiniteTransition(label = "Dots scale")
-    
-    val dot1Scale by transition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1000
-                0.3f at 0
-                1f at 300
-                0.3f at 600
-            },
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "Dot1"
-    )
 
-    val dot2Scale by transition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1000
-                0.3f at 200
-                1f at 500
-                0.3f at 800
-            },
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "Dot2"
-    )
-
-    val dot3Scale by transition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1000
-                0.3f at 400
-                1f at 700
-                0.3f at 1000
-            },
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "Dot3"
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalAlignment = Alignment.Start
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = cardBg),
-                shape = RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp),
-                modifier = Modifier.width(80.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(modifier = Modifier.size(8.dp * dot1Scale).clip(CircleShape).background(accentColor))
-                    Box(modifier = Modifier.size(8.dp * dot2Scale).clip(CircleShape).background(accentColor))
-                    Box(modifier = Modifier.size(8.dp * dot3Scale).clip(CircleShape).background(accentColor))
-                }
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("MalO is typing...", color = Color.Gray, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-        }
-    }
-}
 
 // Fullscreen Media3 Player previewing selection clips
 @Composable
