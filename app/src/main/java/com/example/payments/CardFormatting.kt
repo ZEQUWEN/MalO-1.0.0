@@ -107,7 +107,7 @@ object CardInput {
         raw.filter { it.isDigit() }.take(brand.cvcLength)
 
     fun sanitizeHolder(raw: String): String =
-        raw.filter { it.isLetter() || it == ' ' || it == '-' || it == '\'' }.take(26).uppercase()
+        raw.filter { it.isLetter() || it == ' ' || it == '-' || it == '\'' }.take(26).trim().uppercase()
 
     fun formattedExpiry(digits: String): String {
         val clean = digits.filter { it.isDigit() }
