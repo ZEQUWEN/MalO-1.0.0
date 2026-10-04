@@ -600,8 +600,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val deepSeekKey = DeepSeekClient.PRIMARY_API_KEY
-            if (deepSeekKey.isEmpty()) {
+            val deepSeekKey = BuildConfig.DEEPSEEK_API_KEY
+            if (deepSeekKey.isBlank() || deepSeekKey == "MY_DEEPSEEK_API_KEY") {
                 addMalOMessage("Привет! Не настроен ключ DeepSeek API. Пожалуйста, проверь конфигурацию!")
                 _isTyping.value = false
                 return

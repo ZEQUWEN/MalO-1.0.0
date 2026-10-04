@@ -158,13 +158,13 @@ object MorphologicalAnalyzer {
         else if (w.endsWith("ss")) { /* do nothing */ }
         else if (w.endsWith("s")) w = w.dropLast(1)
 
-        // Past tense & progressive
+        // Past tense & progressive (a compact Porter step 1b implementation).
         if (w.endsWith("eed")) {
             if (w.length > 4) w = w.dropLast(1)
         } else if (w.endsWith("ed") && w.length > 4) {
-            w = w.dropLast(2)
+            w = normalizeEnglishVerbStem(w.dropLast(2))
         } else if (w.endsWith("ing") && w.length > 5) {
-            w = w.dropLast(3)
+            w = normalizeEnglishVerbStem(w.dropLast(3))
         }
 
         // Adverbial / Adjectival
@@ -174,6 +174,31 @@ object MorphologicalAnalyzer {
         if (w.endsWith("tion") && w.length > 6) w = w.dropLast(3)
 
         return w
+    }
+
+    private fun normalizeEnglishVerbStem(stem: String): String {
+        val vowels = setOf('a', 'e', 'i', 'o', 'u', 'y')
+        if (stem.none { it in vowels }) return stem
+
+        if (stem.endsWith("at") || stem.endsWith("bl") || stem.endsWith("iz")) {
+            return stem + "e"
+        }
+
+        val removableDoubleEndings = setOf("bb", "dd", "ff", "gg", "mm", "nn", "pp", "rr", "tt")
+        if (stem.length >= 2 && stem.takeLast(2) in removableDoubleEndings) {
+            return stem.dropLast(1)
+        }
+
+        // Restore a silent e for short consonant-vowel-consonant stems: stared -> stare,
+        // hoped -> hope. Porter excludes w, x, and y in the final position.
+        if (stem.length >= 3) {
+            val (first, middle, last) = stem.takeLast(3).toList()
+            val isShortSyllable = first !in vowels && middle in vowels &&
+                last !in vowels && last !in setOf('w', 'x', 'y')
+            if (isShortSyllable) return stem + "e"
+        }
+
+        return stem
     }
 
     private fun tagPartOfSpeech(token: String, stem: String, language: SupportedLanguage): String {
@@ -232,13 +257,19 @@ object MorphologicalAnalyzer {
         val happyList = if (language == SupportedLanguage.RU) RU_HAPPY_STEMS else EN_HAPPY_STEMS
         val philList = if (language == SupportedLanguage.RU) RU_PHILOSOPHY_STEMS else EN_PHILOSOPHY_STEMS
 
+        // Very short words (for example Russian "за") must not match the start of a
+        // longer sentiment root ("замолч..."). Reverse-prefix matching is useful for
+        // aggressively stemmed words, but only once the stem is distinctive enough.
+        fun matchesRoot(stem: String, root: String): Boolean =
+            stem.startsWith(root) || (stem.length >= 4 && root.startsWith(stem))
+
         for (s in stems) {
-            if (fearList.any { s.startsWith(it) || it.startsWith(s) }) return Sentiment.FEARFUL
-            if (angerList.any { s.startsWith(it) || it.startsWith(s) }) return Sentiment.ANGRY
-            if (sadList.any { s.startsWith(it) || it.startsWith(s) }) return Sentiment.SAD
-            if (affectionList.any { s.startsWith(it) || it.startsWith(s) }) return Sentiment.AFFECTIONATE
-            if (happyList.any { s.startsWith(it) || it.startsWith(s) }) return Sentiment.HAPPY
-            if (philList.any { s.startsWith(it) || it.startsWith(s) }) return Sentiment.PHILOSOPHICAL
+            if (fearList.any { matchesRoot(s, it) }) return Sentiment.FEARFUL
+            if (angerList.any { matchesRoot(s, it) }) return Sentiment.ANGRY
+            if (sadList.any { matchesRoot(s, it) }) return Sentiment.SAD
+            if (affectionList.any { matchesRoot(s, it) }) return Sentiment.AFFECTIONATE
+            if (happyList.any { matchesRoot(s, it) }) return Sentiment.HAPPY
+            if (philList.any { matchesRoot(s, it) }) return Sentiment.PHILOSOPHICAL
         }
 
         // Check if there are interrogatives
@@ -275,7 +306,7 @@ object MorphologicalAnalyzer {
 
         // 4. Where are you (location & presence)
         val locationKeywords = if (language == SupportedLanguage.RU)
-            listOf("где ты", "ты где", "куда ты", "ты здесь", "ты рядом", "за спиной", "в комнате")
+            listOf("где ты", "ты где", "куда ты", "ты здесь", "ты рядом", "за спиной", "за моей спиной", "за твоей спиной", "в комнате")
             else listOf("where are you", "are you here", "behind me", "in my room", "where do you live")
         if (locationKeywords.any { lower.contains(it) }) return MaloIntent.LOCATION
 
