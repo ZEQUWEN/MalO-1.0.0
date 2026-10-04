@@ -42,7 +42,10 @@ interface PaymentGatewayApi {
     suspend fun createInvoice(@Body body: CreateInvoiceRequest): Response<InvoiceResponse>
 
     @GET("api/crypto/invoices/{invoiceId}")
-    suspend fun invoiceStatus(@Path("invoiceId") invoiceId: Long): Response<InvoiceResponse>
+    suspend fun invoiceStatus(
+        @Path("invoiceId") invoiceId: Long,
+        @Query("userId") userId: String
+    ): Response<InvoiceResponse>
 
     @POST("api/checkout")
     suspend fun cardCheckout(@Body body: CardCheckoutRequest): Response<CardCheckoutResponse>
@@ -178,8 +181,8 @@ object PaymentGateway {
     suspend fun createInvoice(context: Context, asset: String, network: String): GatewayResult<InvoiceResponse> =
         call { it.createInvoice(CreateInvoiceRequest(userId(context), asset.uppercase(), network.uppercase())) }
 
-    suspend fun invoiceStatus(invoiceId: Long): GatewayResult<InvoiceResponse> =
-        call { it.invoiceStatus(invoiceId) }
+    suspend fun invoiceStatus(context: Context, invoiceId: Long): GatewayResult<InvoiceResponse> =
+        call { it.invoiceStatus(invoiceId, userId(context)) }
 
     /**
      * Starts a hosted YooKassa payment. `bank_card` may be saved for renewal;

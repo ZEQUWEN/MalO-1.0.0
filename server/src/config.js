@@ -60,8 +60,6 @@ export const config = {
     apiBase: process.env.CRYPTOBOT_API_BASE || 'https://pay.crypt.bot/api',
     paidBtnUrl: process.env.CRYPTOBOT_PAID_BTN_URL || 'https://t.me/CryptoBot',
     invoiceExpiresIn: int(process.env.CRYPTOBOT_INVOICE_EXPIRES_IN, 3600),
-    /** Reject webhook deliveries whose `request_date` is older than this (seconds). */
-    webhookMaxAgeSeconds: int(process.env.CRYPTOBOT_WEBHOOK_MAX_AGE, 300),
   },
 
   /** Never hit a real provider in tests / local demos. */

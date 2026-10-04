@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.CurrencyBitcoin
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Button
@@ -59,6 +60,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +82,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.payments.CardBrand
 import com.example.payments.CardVault
+import com.example.payments.CryptoAsset
+import com.example.payments.CryptoCatalog
+import com.example.payments.CryptoInvoiceDto
 import com.example.payments.GatewayResult
 import com.example.payments.PaymentGateway
 import com.example.ui.payments.AcceptedBrandsRow
@@ -90,7 +95,8 @@ import kotlinx.coroutines.launch
 
 enum class PaymentMethod {
     CARD,
-    SBP
+    SBP,
+    CRYPTO
 }
 
 enum class TransactionStatus {
@@ -101,9 +107,10 @@ enum class TransactionStatus {
 }
 
 /**
- * SubscriptionScreen: Base vs Pro plans with YooKassa card and SBP checkout.
- * Card data is never collected by the Android app; users are redirected to
- * YooKassa and the secure «Мои карты» mini app shows only saved descriptors.
+ * SubscriptionScreen: Base vs Pro plans with YooKassa and CryptoBot checkout.
+ * Card data is never collected by the Android app; YooKassa runs the protected
+ * card/SBP page, while CryptoBot invoices are validated by the Railway gateway
+ * before they can activate the subscription.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -122,6 +129,7 @@ fun SubscriptionScreen(
     val scpSurface = Color(0xFF171620)
     val scpNeonPurple = Color(0xFFBB86FC)
     val scpTerminalGreen = Color(0xFF00FFC4)
+    val scpCryptoOrange = Color(0xFFF7931A)
     val scpErrorRed = Color(0xFFFF5252)
 
     var showCardHolder by remember { mutableStateOf(false) }
@@ -131,6 +139,12 @@ fun SubscriptionScreen(
     // YooKassa never exposes card data to this screen. The only choice made
     // here is whether a card payment may be saved for future auto-renewal.
     var saveCardForAutoPay by remember { mutableStateOf(true) }
+
+    // CryptoBot invoice state. The selected asset is quoted on the server;
+    // the app never decides the amount or locally confirms a transaction.
+    var selectedCryptoAsset by remember { mutableStateOf(CryptoCatalog.asset("USDT") ?: CryptoCatalog.assets.first()) }
+    var activeCryptoInvoice by remember { mutableStateOf<CryptoInvoiceDto?>(null) }
+    var cryptoPolling by remember { mutableStateOf(false) }
 
     // Transaction feedback.
     var transactionStatus by remember { mutableStateOf(TransactionStatus.IDLE) }
@@ -232,6 +246,83 @@ fun SubscriptionScreen(
                     transactionErrorMessage = "Платёжный шлюз ЮKassa недоступен."
                     transactionStatus = TransactionStatus.FAILURE
                 }
+            }
+        }
+    }
+
+    /* ------------------------------------------------ CryptoBot checkout */
+
+    fun createCryptoBotInvoice() {
+        transactionStatus = TransactionStatus.PROCESSING
+        processingStageText = "Создание счёта в Telegram CryptoBot..."
+        receiptMethodLabel = "CryptoBot • ${selectedCryptoAsset.symbol}"
+
+        coroutineScope.launch {
+            if (!PaymentGateway.isConfigured) {
+                transactionErrorMessage = "Платёжный шлюз не настроен: укажите MALO_GATEWAY_URL для Railway-сервиса."
+                transactionStatus = TransactionStatus.FAILURE
+                return@launch
+            }
+            when (
+                val result = PaymentGateway.createInvoice(
+                    context,
+                    selectedCryptoAsset.symbol,
+                    selectedCryptoAsset.defaultNetwork().id
+                )
+            ) {
+                is GatewayResult.Success -> {
+                    val invoice = result.data.invoice
+                    if (invoice == null || invoice.payUrl.isNullOrBlank()) {
+                        transactionErrorMessage = "CryptoBot не вернул ссылку на счёт."
+                        transactionStatus = TransactionStatus.FAILURE
+                        return@launch
+                    }
+                    activeCryptoInvoice = invoice
+                    receiptAmountLabel = "${invoice.amount} ${invoice.asset}"
+                    transactionId = invoice.invoiceId.toString()
+                    cryptoPolling = true
+                    val paymentUrl = invoice.miniAppUrl ?: invoice.payUrl
+                    val opened = runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(paymentUrl))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }.isSuccess
+                    transactionStatus = TransactionStatus.IDLE
+                    if (!opened) {
+                        Toast.makeText(context, "Счёт создан. Откройте его кнопкой CryptoBot на этом экране.", Toast.LENGTH_LONG).show()
+                    }
+                }
+                is GatewayResult.Error -> {
+                    transactionErrorMessage = result.message
+                    transactionStatus = TransactionStatus.FAILURE
+                }
+                GatewayResult.NotConfigured -> {
+                    transactionErrorMessage = "Платёжный шлюз CryptoBot недоступен."
+                    transactionStatus = TransactionStatus.FAILURE
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(activeCryptoInvoice?.invoiceId, cryptoPolling) {
+        val invoice = activeCryptoInvoice ?: return@LaunchedEffect
+        if (!cryptoPolling) return@LaunchedEffect
+        while (cryptoPolling) {
+            delay(5_000)
+            when (val result = PaymentGateway.invoiceStatus(context, invoice.invoiceId)) {
+                is GatewayResult.Success -> {
+                    val updated = result.data.invoice ?: invoice
+                    activeCryptoInvoice = updated
+                    if (updated.isPaid || result.data.subscription?.isActive == true) {
+                        cryptoPolling = false
+                        transactionId = updated.invoiceId.toString()
+                        receiptMethodLabel = "CryptoBot • ${updated.asset}"
+                        receiptAmountLabel = "${updated.amount} ${updated.asset}"
+                        transactionStatus = TransactionStatus.SUCCESS
+                    }
+                }
+                else -> Unit // The signed webhook remains authoritative; keep polling.
             }
         }
     }
@@ -450,6 +541,14 @@ fun SubscriptionScreen(
                             modifier = Modifier.weight(1f),
                             onClick = { selectedPaymentMethod = PaymentMethod.SBP }
                         )
+                        PaymentMethodTab(
+                            title = "CryptoBot",
+                            icon = Icons.Default.CurrencyBitcoin,
+                            isSelected = selectedPaymentMethod == PaymentMethod.CRYPTO,
+                            activeColor = scpCryptoOrange,
+                            modifier = Modifier.weight(1f),
+                            onClick = { selectedPaymentMethod = PaymentMethod.CRYPTO }
+                        )
                     }
                 }
 
@@ -458,19 +557,56 @@ fun SubscriptionScreen(
                     transitionSpec = { fadeIn() togetherWith fadeOut() },
                     label = "payment_panel"
                 ) { method ->
-                    YooKassaPaymentDetails(
-                        paymentMethod = method,
-                        saveCard = saveCardForAutoPay,
-                        onSaveCardChange = { saveCardForAutoPay = it },
-                        scpSurface = scpSurface,
-                        accentColor = scpTerminalGreen,
-                        onOpenMyCards = { showCardHolder = true }
-                    )
+                    when (method) {
+                        PaymentMethod.CARD, PaymentMethod.SBP -> YooKassaPaymentDetails(
+                            paymentMethod = method,
+                            saveCard = saveCardForAutoPay,
+                            onSaveCardChange = { saveCardForAutoPay = it },
+                            scpSurface = scpSurface,
+                            accentColor = scpTerminalGreen,
+                            onOpenMyCards = { showCardHolder = true }
+                        )
+                        PaymentMethod.CRYPTO -> CryptoBotPaymentDetails(
+                            asset = selectedCryptoAsset,
+                            onAssetChange = {
+                                selectedCryptoAsset = it
+                                activeCryptoInvoice = null
+                                cryptoPolling = false
+                            },
+                            invoice = activeCryptoInvoice,
+                            scpSurface = scpSurface,
+                            accentColor = scpCryptoOrange,
+                            onOpenInvoice = { url ->
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }
+                        )
+                    }
                 }
 
                 Button(
-                    onClick = { payWithYooKassa() },
-                    colors = ButtonDefaults.buttonColors(containerColor = scpTerminalGreen),
+                    onClick = {
+                        if (selectedPaymentMethod == PaymentMethod.CRYPTO) {
+                            val existing = activeCryptoInvoice
+                            if (existing?.payUrl != null) {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(existing.miniAppUrl ?: existing.payUrl))
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            } else {
+                                createCryptoBotInvoice()
+                            }
+                        } else {
+                            payWithYooKassa()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selectedPaymentMethod == PaymentMethod.CRYPTO) scpCryptoOrange else scpTerminalGreen
+                    ),
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp),
                     modifier = Modifier
@@ -481,10 +617,10 @@ fun SubscriptionScreen(
                     Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (selectedPaymentMethod == PaymentMethod.CARD) {
-                            "Перейти к оплате картой"
-                        } else {
-                            "Оплатить через СБП"
+                        text = when (selectedPaymentMethod) {
+                            PaymentMethod.CARD -> "Перейти к оплате картой"
+                            PaymentMethod.SBP -> "Оплатить через СБП"
+                            PaymentMethod.CRYPTO -> if (activeCryptoInvoice == null) "Выставить счёт в CryptoBot" else "Открыть счёт CryptoBot"
                         },
                         color = Color.Black,
                         fontWeight = FontWeight.Bold,
@@ -826,10 +962,10 @@ fun SubscriptionScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (selectedPaymentMethod == PaymentMethod.CARD) {
-                                    "• Недостаточно средств на счёте\n• Карта заблокирована для онлайн-оплат\n• Подтверждение 3-D Secure не завершено"
-                                } else {
-                                    "• Операция не подтверждена в приложении банка\n• Истёк срок счёта СБП\n• СБП временно недоступна у банка"
+                                text = when (selectedPaymentMethod) {
+                                    PaymentMethod.CARD -> "• Недостаточно средств на счёте\n• Карта заблокирована для онлайн-оплат\n• Подтверждение 3-D Secure не завершено"
+                                    PaymentMethod.SBP -> "• Операция не подтверждена в приложении банка\n• Истёк срок счёта СБП\n• СБП временно недоступна у банка"
+                                    PaymentMethod.CRYPTO -> "• Счёт CryptoBot истёк или не оплачен\n• Выбранный актив недоступен\n• Подтверждение от CryptoBot ещё не получено"
                                 },
                                 color = Color.LightGray,
                                 fontSize = 11.sp,
@@ -857,7 +993,7 @@ fun SubscriptionScreen(
                         Button(
                             onClick = {
                                 transactionStatus = TransactionStatus.IDLE
-                                payWithYooKassa()
+                                if (selectedPaymentMethod == PaymentMethod.CRYPTO) createCryptoBotInvoice() else payWithYooKassa()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
                             modifier = Modifier
@@ -1178,6 +1314,85 @@ fun YooKassaPaymentDetails(
                 Icon(Icons.Default.CreditCard, contentDescription = null, modifier = Modifier.size(17.dp))
                 Spacer(modifier = Modifier.width(7.dp))
                 Text("Мои карты", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** A real CryptoBot invoice picker. Amount and confirmation come exclusively from the gateway. */
+@Composable
+fun CryptoBotPaymentDetails(
+    asset: CryptoAsset,
+    onAssetChange: (CryptoAsset) -> Unit,
+    invoice: CryptoInvoiceDto?,
+    scpSurface: Color,
+    accentColor: Color,
+    onOpenInvoice: (String) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = scpSurface),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CurrencyBitcoin, contentDescription = null, tint = accentColor, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Telegram CryptoBot", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Text("Счёт и подтверждение оплаты выполняются в Crypto Pay", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
+            Text("Актив для оплаты", color = Color.Gray, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("USDT", "TON", "BTC").mapNotNull { CryptoCatalog.asset(it) }.forEach { option ->
+                    val selected = option.symbol == asset.symbol
+                    Surface(
+                        color = if (selected) accentColor.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.28f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, if (selected) accentColor else Color.DarkGray),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onAssetChange(option) }
+                            .testTag("crypto_asset_${option.symbol}")
+                    ) {
+                        Text(
+                            text = option.symbol,
+                            color = if (selected) accentColor else Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 9.dp)
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "Сумма рассчитывается сервером по тарифу и фиксируется в счёте. После оплаты подпись вебхука, счёт, актив, сумма и серверный payload проверяются повторно.",
+                color = Color.LightGray,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+            invoice?.let { current ->
+                Surface(
+                    color = accentColor.copy(alpha = 0.10f),
+                    shape = RoundedCornerShape(9.dp),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Счёт #${current.invoiceId} ожидает оплаты", color = Color.White, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                        Text("К оплате: ${current.amount} ${current.asset}", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        current.payUrl?.let { url ->
+                            TextButton(onClick = { onOpenInvoice(current.miniAppUrl ?: url) }) {
+                                Text("Открыть CryptoBot", color = accentColor, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                    }
+                }
             }
         }
     }

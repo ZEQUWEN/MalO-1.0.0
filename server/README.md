@@ -15,12 +15,14 @@ never receives card data.
 * **СБП** — explicit `sbp` redirect checkout, usable for initial payment and
   manual extension of an active subscription. СБП creates no local saved card;
   auto-renewal remains a selected-card operation.
+* **Telegram CryptoBot** — the gateway creates a Crypto Pay invoice for the
+  server price and opens the returned bot/Mini App URL. For each `invoice_paid`
+  webhook it verifies the raw-body HMAC, refetches the provider invoice and
+  compares invoice ID, `paid` status, asset, exact decimal amount and the
+  server-generated payload before granting Pro.
 * **«Мои карты»** — Android renders a swipeable card pager from `GET /api/cards`
   and makes default/remove operations through this gateway. It has no raw-card
   input fields.
-
-The legacy CryptoBot routes remain isolated for existing deployments, but the
-current Android checkout deliberately exposes only YooKassa cards and СБП.
 
 ## Run locally
 
@@ -51,6 +53,25 @@ Select `payment.succeeded`, `payment.canceled`, and `refund.succeeded`.
 source subnets. The handler is replay-protected and idempotent by
 `event:payment_id`, so a retry cannot add a second subscription period.
 
+## CryptoBot webhook
+
+Set a **fresh** Crypto Pay API token as the Railway-only `CRYPTOBOT_TOKEN`
+variable. Do not place it in `app/.env`, `BuildConfig`, source code, or Git.
+In Telegram: **@CryptoBot → Crypto Pay → My Apps → [app] → Webhooks → Enable**
+and enter:
+
+```text
+https://malo.up.railway.app/api/webhooks/cryptobot
+```
+
+Crypto Pay retries failed webhook delivery. The route reads the unparsed body
+and accepts it only when `crypto-pay-api-signature` equals
+`HMAC-SHA256(SHA256(CRYPTOBOT_TOKEN), rawBody)`. `update_id` is documented as
+non-unique, so deduplication is by immutable paid invoice ID rather than update
+ID. A valid signature alone is not enough: the server refetches the invoice and
+checks the provider's `paid` status, asset and decimal amount against the
+locally created invoice and validates the opaque JSON payload.
+
 ## App-facing API
 
 All app endpoints require `userId` and use `X-MalO-Client-Key` when
@@ -61,6 +82,8 @@ All app endpoints require `userId` and use `X-MalO-Client-Key` when
 | `GET` | `/api/health` | liveness and provider configuration |
 | `GET` | `/api/catalog` | plan, accepted brands, `bank_card` and `sbp` methods |
 | `POST` | `/api/checkout` | start a YooKassa checkout (`paymentMethod: bank_card\|sbp`) |
+| `POST` | `/api/crypto/invoices` | create a fixed-price CryptoBot invoice (`asset`, `network`) |
+| `GET` | `/api/crypto/invoices/:id?userId=…` | read/poll only the caller's CryptoBot invoice |
 | `POST` | `/api/cards/checkout` | compatibility alias for old Android builds |
 | `GET` | `/api/cards/payments/:id?userId=…` | poll a pending YooKassa confirmation |
 | `GET` | `/api/cards?userId=…` | saved card descriptors only — never PAN/token |

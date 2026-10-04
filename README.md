@@ -48,7 +48,7 @@ and says `start.sh not found`, that service is building a different commit,
 branch, or root directory: the tracked `start.sh`, `build.sh`, `Dockerfile`,
 and `railway.json` must be visible at the deployment root.
 
-## Billing (ЮKassa cards + СБП)
+## Billing (ЮKassa, СБП + Telegram CryptoBot)
 
 Payments live in [`server/`](server/README.md) — a small Node/Express gateway
 that Railway runs alongside the APK download page:
@@ -60,13 +60,19 @@ that Railway runs alongside the APK download page:
 * **СБП** — the app creates an explicit ЮKassa `sbp` redirect checkout. This is
   available both for the initial payment and for manual subscription renewal;
   it never creates a locally saved card or silently enables auto-renewal.
+* **Telegram CryptoBot** — an additional Crypto Pay option. The server creates
+  a fixed invoice for the plan price and opens its `bot_invoice_url` / Mini App
+  URL. The signed `invoice_paid` webhook is followed by a provider API lookup;
+  invoice ID, status, asset, decimal amount and server-issued payload must all
+  match before Pro is activated.
 * **«Мои карты»** — a dedicated mini-app-style submenu with a horizontal swipe
   pager. It mirrors only the scheme, masked number, expiry, and selected-card
   state received from the gateway. Users can swipe to a card, choose it for
   auto-renewal, add another card through ЮKassa, or delete it.
-* **Webhooks** — `POST /api/webhooks/yookassa` is source-IP allowlisted,
-  replay-protected, and idempotent. It is the authority that activates or
-  extends a subscription after payment confirmation.
+* **Webhooks** — `POST /api/webhooks/yookassa` is source-IP allowlisted;
+  `POST /api/webhooks/cryptobot` verifies `HMAC-SHA256(SHA256(token), rawBody)`.
+  Both are replay-protected and idempotent, and are the authority that
+  activates or extends a subscription after payment confirmation.
 
 `CardBrand.kt` retains correct local rendering for the scheme supplied by
 ЮKassa and other masked descriptors. In particular, the МИР range `2200`–
@@ -74,13 +80,14 @@ that Railway runs alongside the APK download page:
 and is displayed with the correct mark.
 
 The production Railway deployment lives at **https://malo.up.railway.app**.
-Register the YooKassa webhook:
+Register both payment webhooks:
 
 ```
 https://malo.up.railway.app/api/webhooks/yookassa
+https://malo.up.railway.app/api/webhooks/cryptobot
 ```
 
-`GET /api/webhooks` prints the runtime URL. Full Railway variables, volume,
+`GET /api/webhooks` prints the runtime URLs. Full Railway variables, volume,
 webhook, and smoke-test instructions are in [DEPLOY.md](DEPLOY.md).
 
 Point the app at the gateway via `.env`:

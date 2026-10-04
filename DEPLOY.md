@@ -10,6 +10,7 @@ the tracked `Dockerfile`; do not add a separate Railpack/Nixpacks build command.
 | Health check | `https://malo.up.railway.app/api/health` |
 | Checkout catalogue | `https://malo.up.railway.app/api/catalog` |
 | YooKassa webhook | `https://malo.up.railway.app/api/webhooks/yookassa` |
+| CryptoBot webhook | `https://malo.up.railway.app/api/webhooks/cryptobot` |
 
 ## 1. Railway service settings
 
@@ -50,8 +51,14 @@ YOOKASSA_API_BASE=https://api.yookassa.ru/v3
 YOOKASSA_RETURN_URL=malo://payment/return
 YOOKASSA_VERIFY_NETWORK=1
 
+# Keep this ONLY in Railway Variables — never in the APK, Git, or a client app.
+CRYPTOBOT_TOKEN=<fresh-crypto-pay-api-token>
+CRYPTOBOT_API_BASE=https://pay.crypt.bot/api
+CRYPTOBOT_INVOICE_EXPIRES_IN=3600
+
 MALO_PLAN_PERIOD_DAYS=30
 MALO_PRICE_RUB=499.00
+MALO_PRICE_USD=4.99
 ```
 
 > **Persistence is mandatory.** `/app/.data` contains opaque provider-issued card
@@ -90,7 +97,30 @@ The app does not collect a PAN, expiry, or CVC. It opens YooKassa's
 СБП is presented as a manual payment/renewal method. Card auto-renewal requires
 a separately saved bank-card payment method.
 
-## 4. Build the Android app against Railway
+## 4. Configure Telegram CryptoBot webhooks
+
+1. **Rotate the Crypto Pay API token if it has ever been sent in a chat, issue,
+   screenshot, or commit.** Treat it as compromised. Do not paste it into any
+   Android file — it belongs only in Railway as `CRYPTOBOT_TOKEN`.
+2. In Telegram open **@CryptoBot → Crypto Pay → My Apps → your app → Webhooks**,
+   enable webhooks and enter:
+
+```text
+https://malo.up.railway.app/api/webhooks/cryptobot
+```
+
+Crypto Pay sends an HTTPS `invoice_paid` update and retries a non-2xx response
+up to 17 times. The gateway keeps the raw request body, verifies
+`crypto-pay-api-signature` using `HMAC-SHA256(SHA256(CRYPTOBOT_TOKEN), rawBody)`,
+then fetches the provider invoice itself. Pro is granted only when the paid
+provider invoice has the same invoice ID, asset, decimal amount and
+server-generated payload as a locally issued MalO invoice. Duplicate webhook
+updates cannot extend the period twice.
+
+Use `https://pay.crypt.bot/api` for mainnet. Set a testnet endpoint/token only
+in a separate Railway environment; never mix testnet and production state.
+
+## 5. Build the Android app against Railway
 
 At the repository root, set non-secret gateway settings before making the APK:
 
@@ -108,12 +138,14 @@ an APK can be extracted. Before a commercial RuStore release, protect real
 users with an authenticated account/session and enforce user ownership on the
 gateway; do not treat an APK-embedded key as a credential.
 
-## 5. Smoke test
+## 6. Smoke test
 
 ```sh
 curl https://malo.up.railway.app/api/health
 curl https://malo.up.railway.app/api/catalog
 curl https://malo.up.railway.app/api/webhooks
+# Verify that health reports both configured providers without exposing secrets:
+# curl https://malo.up.railway.app/api/health
 curl -I https://malo.up.railway.app/favicon.ico
 ```
 
@@ -129,6 +161,8 @@ secret key are configured. `GET /api/catalog` must include:
 | Symptom | Cause / action |
 |---|---|
 | `YOOKASSA_NOT_CONFIGURED` | Set `YOOKASSA_SHOP_ID` and `YOOKASSA_SECRET_KEY` in Railway Variables, then redeploy. |
+| `CRYPTOBOT_NOT_CONFIGURED` | Add a fresh `CRYPTOBOT_TOKEN` in Railway Variables and redeploy. Never put this secret into the APK. |
+| `BAD_SIGNATURE` / `INVOICE_*_MISMATCH` from CryptoBot | Check that the app token is from the same Crypto Pay app and that the invoice was created by this gateway; the server intentionally refuses mismatched invoices. |
 | `401 UNTRUSTED_SOURCE` on a YooKassa notification | Verify that `YOOKASSA_VERIFY_NETWORK=1` uses the published source ranges. Disable it only temporarily while diagnosing. |
 | Payment succeeded but Pro is not active | Check the YooKassa webhook delivery log and the Railway log; the gateway is idempotent, so it is safe for YooKassa to retry. |
 | Saved cards/subscriptions disappear after deploy | Attach the Volume to `/app/.data` and set `MALO_DATA_DIR=/app/.data`. |

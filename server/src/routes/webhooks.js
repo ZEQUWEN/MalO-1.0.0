@@ -11,10 +11,11 @@
 import { Router } from 'express';
 import { config } from '../config.js';
 import { db } from '../store.js';
-import { NETWORKS } from '../networks.js';
-import { verifyCryptoBotSignature } from '../providers/cryptobot.js';
+import { cryptobot, verifyCryptoBotSignature } from '../providers/cryptobot.js';
 import { isTrustedYooKassaIp } from '../providers/yookassa.js';
+import { asyncRoute } from '../middleware.js';
 import { activateSubscription, getSubscription } from '../subscriptions.js';
+import { settleCryptoInvoice } from './crypto.js';
 import { upsertCardFromPaymentMethod } from './cards.js';
 import { logWebhook } from '../logger.js';
 
@@ -30,77 +31,56 @@ const parseJson = (raw) => {
 
 /* ------------------------------------------------------------ CryptoBot -- */
 
-webhooksRouter.post('/webhooks/cryptobot', (req, res) => {
-  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''), 'utf8');
-  const signature = req.get('crypto-pay-api-signature');
+webhooksRouter.post(
+  '/webhooks/cryptobot',
+  asyncRoute(async (req, res) => {
+    // Crypto Pay signs the exact JSON bytes. This route is mounted with
+    // express.raw() before the JSON parser; never stringify/reformat first.
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''), 'utf8');
+    const signature = req.get('crypto-pay-api-signature');
+    if (!config.mockProviders && !verifyCryptoBotSignature(raw, signature)) {
+      logWebhook('cryptobot', 'rejected', 'bad signature');
+      return res.status(401).json({ ok: false, error: { code: 'BAD_SIGNATURE' } });
+    }
 
-  if (!config.mockProviders && !verifyCryptoBotSignature(raw, signature)) {
-    logWebhook('cryptobot', 'rejected', 'bad signature');
-    return res.status(401).json({ ok: false, error: { code: 'BAD_SIGNATURE' } });
-  }
+    const update = parseJson(raw);
+    if (!update || update.update_type !== 'invoice_paid' || !update.payload?.invoice_id) {
+      return res.status(400).json({ ok: false, error: { code: 'BAD_PAYLOAD' } });
+    }
 
-  const update = parseJson(raw);
-  if (!update || !update.update_id) {
-    return res.status(400).json({ ok: false, error: { code: 'BAD_PAYLOAD' } });
-  }
+    // Crypto Pay documents update_id as non-unique. Deduplication must use the
+    // immutable invoice id (and the invoice's `paid` state), not update_id.
+    const stored = db.getInvoice(update.payload.invoice_id);
+    if (!stored) {
+      logWebhook('cryptobot', 'ignored', `unknown invoice=${update.payload.invoice_id}`);
+      return res.status(202).json({ ok: true, ignored: 'unknown_invoice' });
+    }
+    const dedupeKey = `cryptobot:invoice_paid:${stored.invoiceId}`;
+    if (stored.status === 'paid' || db.seenWebhook(dedupeKey)) {
+      return res.json({ ok: true, duplicate: true });
+    }
 
-  // Replay protection: reject stale deliveries and duplicate update ids.
-  const requestDate = update.request_date ? Date.parse(update.request_date) : Date.now();
-  const ageSeconds = (Date.now() - requestDate) / 1000;
-  if (Number.isFinite(ageSeconds) && ageSeconds > config.cryptobot.webhookMaxAgeSeconds) {
-    return res.status(202).json({ ok: true, ignored: 'stale' });
-  }
+    // Do not trust a webhook field merely because it looks plausible. After
+    // HMAC verification, request the provider invoice and compare id, status,
+    // asset, decimal amount, and the server-issued opaque payload.
+    const remote = await cryptobot.getInvoice(stored.invoiceId);
+    if (!remote) {
+      const error = new Error('Crypto Pay did not return the invoice for webhook verification');
+      error.status = 502;
+      error.code = 'CRYPTOBOT_INVOICE_UNAVAILABLE';
+      throw error;
+    }
+    const settled = settleCryptoInvoice(stored, remote, 'webhook');
+    if (settled.validation) {
+      logWebhook('cryptobot', 'rejected', `${settled.validation.code} invoice=${stored.invoiceId}`);
+      return res.status(409).json({ ok: false, error: settled.validation });
+    }
 
-  const dedupeKey = `cryptobot:${update.update_id}`;
-  if (db.seenWebhook(dedupeKey)) return res.json({ ok: true, duplicate: true });
-  db.markWebhook(dedupeKey);
-
-  if (update.update_type !== 'invoice_paid') {
-    return res.json({ ok: true, ignored: update.update_type });
-  }
-
-  const payloadInvoice = update.payload || {};
-  const stored = db.getInvoice(payloadInvoice.invoice_id);
-
-  let meta = {};
-  try {
-    meta = payloadInvoice.payload ? JSON.parse(payloadInvoice.payload) : {};
-  } catch {
-    meta = {};
-  }
-
-  const userId = stored?.userId || meta.userId;
-  if (!userId) return res.status(202).json({ ok: true, ignored: 'unknown_invoice' });
-
-  const network = (stored?.network || meta.network || '').toUpperCase();
-  const asset = payloadInvoice.asset || stored?.asset || 'USDT';
-  const amount = payloadInvoice.amount || stored?.amount || '0';
-
-  if (stored) {
-    if (stored.status === 'paid') return res.json({ ok: true, duplicate: true });
-    stored.status = 'paid';
-    stored.paidAt = payloadInvoice.paid_at ? Date.parse(payloadInvoice.paid_at) : Date.now();
-    stored.txHash = payloadInvoice.hash || stored.hash;
-    db.saveInvoice(stored);
-  }
-
-  logWebhook('cryptobot', 'invoice_paid', `invoice=${payloadInvoice.invoice_id} ${amount} ${asset} via ${network || 'AUTO'}`);
-
-  activateSubscription({
-    userId,
-    paymentMethod: `CRYPTO:${asset}:${network || 'AUTO'}`,
-    transactionId: String(payloadInvoice.invoice_id || stored?.invoiceId || ''),
-    amount: `${amount} ${asset}`,
-    meta: {
-      source: 'webhook',
-      network,
-      networkTitle: NETWORKS[network]?.title || network || null,
-      explorer: NETWORKS[network]?.explorer || null,
-    },
-  });
-
-  return res.json({ ok: true });
-});
+    db.markWebhook(dedupeKey);
+    logWebhook('cryptobot', 'invoice_paid', `invoice=${stored.invoiceId} ${stored.amount} ${stored.asset} via ${stored.network}`);
+    return res.json({ ok: true, duplicate: Boolean(settled.duplicate) });
+  }),
+);
 
 /* ------------------------------------------------------------- YooKassa -- */
 
