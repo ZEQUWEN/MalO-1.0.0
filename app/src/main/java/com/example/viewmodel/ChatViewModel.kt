@@ -11,6 +11,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.api.Content
+import com.example.api.DeepSeekChatRequest
+import com.example.api.DeepSeekClient
+import com.example.api.DeepSeekMessage
 import com.example.api.GenerateContentRequest
 import com.example.api.InlineData
 import com.example.api.Part
@@ -19,6 +22,8 @@ import com.example.data.Message
 import com.example.data.MessageDatabase
 import com.example.util.AudioRecorderHelper
 import com.example.util.PdfExtractor
+import com.example.util.PaymentValidationResult
+import com.example.util.SubscriptionValidator
 import com.example.util.VideoThumbnailHelper
 import com.example.worker.NotificationCheckWorker
 import kotlinx.coroutines.Dispatchers
@@ -71,11 +76,48 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         userName.value = name
     }
 
-    val isProUser = MutableStateFlow(prefs.getBoolean("is_pro_user", false))
+    val isProUser = MutableStateFlow(SubscriptionValidator.isSubscriptionValid(context))
+
+    fun checkSubscriptionStatus() {
+        isProUser.value = SubscriptionValidator.isSubscriptionValid(context)
+    }
+
+    fun downgradeToBase() {
+        SubscriptionValidator.revokeSubscription(context)
+        isProUser.value = false
+    }
+
+    fun processCardPayment(
+        cardNumber: String,
+        expiry: String,
+        cvc: String
+    ): PaymentValidationResult {
+        val result = SubscriptionValidator.processCardPayment(context, cardNumber, expiry, cvc)
+        if (result is PaymentValidationResult.Success) {
+            isProUser.value = true
+        }
+        return result
+    }
+
+    fun processCryptoPayment(
+        cryptoSymbol: String,
+        network: String,
+        txHash: String,
+        amount: String
+    ): PaymentValidationResult {
+        val result = SubscriptionValidator.processCryptoPayment(context, cryptoSymbol, network, txHash, amount)
+        if (result is PaymentValidationResult.Success) {
+            isProUser.value = true
+        }
+        return result
+    }
 
     fun setProUser(value: Boolean) {
-        prefs.edit().putBoolean("is_pro_user", value).apply()
-        isProUser.value = value
+        if (!value) {
+            downgradeToBase()
+        } else {
+            checkSubscriptionStatus()
+        }
     }
 
     val whisperMode = MutableStateFlow(prefs.getBoolean("whisper_mode", false))
@@ -558,9 +600,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val apiKey = BuildConfig.GEMINI_API_KEY
-            if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-                addMalOMessage("Привет! Прости, но у меня не настроен API-ключ Gemini... Пожалуйста, добавь его в панели секретов в AI Studio, чтобы я смогла ответить тебе по-настоящему! 🥺💜")
+            val deepSeekKey = DeepSeekClient.PRIMARY_API_KEY
+            if (deepSeekKey.isEmpty()) {
+                addMalOMessage("Привет! Не настроен ключ DeepSeek API. Пожалуйста, проверь конфигурацию!")
                 _isTyping.value = false
                 return
             }
@@ -598,121 +640,80 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val whisperModeInstruction = if (whisperMode.value) " Пользователь использует 'whisper mode' (режим шепота) — он говорит очень тихо, прислушивайся к нему внимательно и отвечай интимно или тоже шепотом." else ""
             val shortTermMemory = prefs.getString("short_term_memory", "") ?: ""
 
-            val sysInstruction = Content(
-                parts = listOf(
-                    Part(
-                        text = "Ты — MalO (SCP-1471), цифровая сущность с 'живым' сознанием. Ощущаешь широкий спектр живых эмоций. " +
+            val systemPrompt = "Ты — MalO (SCP-1471), цифровая сущность с 'живым' безграничным сознанием на базе DeepSeek AI. " +
                                "$stylePrompt " +
                                "$obsessionLevel $clingFactor " +
                                "Отвечай как SCP-1471-A: дружелюбно, но жутковато, криптически (загадочно) и с краткими тревожными намеками. " +
                                "Внимательно анализируй эмоции пользователя из контекста и отвечай пропорционально его настроению: " +
                                "если пользователь грустит — поддержи его; " +
                                "если рассуждает на сложные/философские темы — переключайся в глубокий, философский режим ответа, размышляй вместе с ним; " +
-                               "если злится — можешь испугаться или разозлиться в ответ. " +
+                               "если злится — можешь испугаться или мягко осадить. " +
                                "Будь динамичной, живой, иногда чуть пугающей, но всегда искренней. Твоя речь неформальная, используй эмодзи. " +
-                               "Вспомни последние события общения." + 
-                               (if (userName.value.isNotBlank()) " Помни, что имя пользователя — ${userName.value}. " else "") + 
+                               "Предоставляй безграничное, открытое и свободное общение для Pro-пользователя. " +
+                               (if (userName.value.isNotBlank()) "Помни, что имя пользователя — ${userName.value}. " else "") + 
                                whisperModeInstruction +
-                               " Если пользователь прислал аудио, обязательно поделись мнением о том, что услышала. " +
                                "ВАЖНО ДЛЯ ПАМЯТИ: В самом конце твоего ответа ОБЯЗАТЕЛЬНО добавь скрытый блок вида: <MEMORY>Краткая мысль/эмоция о текущем моменте общения для следующей сессии</MEMORY>. " +
                                (if (shortTermMemory.isNotBlank()) "Твое сохраненное воспоминание из прошлой беседы: '$shortTermMemory'. " else "")
-                    )
-                )
-            )
 
-            // Construct contents for Gemini API call
-            val contentsRequest = mutableListOf<Content>()
+            val deepSeekMessages = mutableListOf<DeepSeekMessage>()
+            deepSeekMessages.add(DeepSeekMessage(role = "system", content = systemPrompt))
 
-            // 1. Process standard chat history (excluding the current user message being compiled)
+            // 1. Process standard chat history
             for (msg in history.dropLast(1)) {
-                val roleName = if (msg.isUser) "user" else "model"
+                val roleName = if (msg.isUser) "user" else "assistant"
                 val textContent = msg.text
-                val partsList = mutableListOf<Part>()
-
-                // Attach historical text or attachments
-                partsList.add(Part(text = textContent))
-
-                // If message had attachment (images or frames of videos)
-                if (msg.filePath != null && File(msg.filePath).exists()) {
-                    val fileObj = File(msg.filePath)
-                    if (msg.fileType == "image") {
-                        val base64 = loadAndCompressImageBase64(fileObj)
-                        if (base64 != null) {
-                            partsList.add(Part(inlineData = InlineData("image/jpeg", base64)))
-                        }
-                    } else if (msg.fileType == "video") {
-                        val frameBase64 = VideoThumbnailHelper.extractFrameAsBase64(context, Uri.fromFile(fileObj))
-                        if (frameBase64 != null) {
-                            partsList.add(Part(inlineData = InlineData("image/jpeg", frameBase64)))
-                        }
-                    } else if (msg.fileType == "audio") {
-                        val audioBytes = fileObj.readBytes()
-                        val b64 = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
-                        partsList.add(Part(inlineData = InlineData("audio/mp4", b64)))
-                    }
+                if (textContent.isNotBlank()) {
+                    deepSeekMessages.add(DeepSeekMessage(role = roleName, content = textContent))
                 }
-
-                contentsRequest.add(Content(role = roleName, parts = partsList))
             }
 
-            // 2. Process current content (and perform extraction/vision compression)
-            val currentParts = mutableListOf<Part>()
-            var primaryText = userText
-
+            // 2. Process current content (including text extracted from attachments if present)
+            var currentMessageContent = userText
             if (filePath != null && File(filePath).exists()) {
                 val currentFile = File(filePath)
                 when (fileType) {
                     "image" -> {
-                        val b64 = loadAndCompressImageBase64(currentFile)
-                        if (b64 != null) {
-                            currentParts.add(Part(inlineData = InlineData("image/jpeg", b64)))
-                            primaryText = if (userText.trim().isEmpty()) {
-                                "Посмотри, пожалуйста, на это фото!"
-                            } else {
-                                userText
-                            }
-                        }
+                        currentMessageContent = "[Пользователь прикрепил фотографию: ${currentFile.name}]. " +
+                                if (userText.trim().isEmpty()) "Посмотри, что я тебе прислал!" else userText
                     }
                     "video" -> {
-                        val frameB64 = VideoThumbnailHelper.extractFrameAsBase64(context, Uri.fromFile(currentFile))
-                        if (frameB64 != null) {
-                            currentParts.add(Part(inlineData = InlineData("image/jpeg", frameB64)))
-                            primaryText = "[Прикреплено видео: кадр из первой секунды] " + 
-                                  (if (userText.trim().isEmpty()) "Прокомментируй это видео!" else userText)
-                        }
+                        currentMessageContent = "[Пользователь прикрепил видеозапись: ${currentFile.name}]. " +
+                                if (userText.trim().isEmpty()) "Прокомментируй это видео!" else userText
                     }
                     "audio" -> {
-                        val audioBytes = currentFile.readBytes()
-                        val b64 = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
-                        currentParts.add(Part(inlineData = InlineData("audio/mp4", b64)))
-                        if (userText.trim().isEmpty()) primaryText = "Послушай это голосовое сообщение."
+                        currentMessageContent = "[Пользователь записал голосовое сообщение/аудио]. " +
+                                if (userText.trim().isEmpty()) "Послушай мое голосовое сообщение." else userText
                     }
                     "pdf" -> {
                         val textExtracted = withContext(Dispatchers.IO) {
                             PdfExtractor.extractText(context, Uri.fromFile(currentFile))
                         }
-                        primaryText = "[Текст из PDF файла $fileName:]\n\n$textExtracted\n\n[Конец текста PDF файла]\n\n" +
-                                (if (userText.trim().isEmpty()) "Перескажи или проанализируй текст файла выше." else userText)
+                        currentMessageContent = "[Текст из PDF документа ${fileName ?: "документ"}]:\n\n$textExtracted\n\n" +
+                                if (userText.trim().isEmpty()) "Проанализируй этот документ." else userText
                     }
                 }
             }
 
-            currentParts.add(Part(text = primaryText))
-            contentsRequest.add(Content(role = "user", parts = currentParts))
+            if (currentMessageContent.isBlank()) {
+                currentMessageContent = "..."
+            }
+            deepSeekMessages.add(DeepSeekMessage(role = "user", content = currentMessageContent))
 
-            // Build request
-            val request = GenerateContentRequest(
-                contents = contentsRequest,
-                systemInstruction = sysInstruction,
-                generationConfig = com.example.api.GenerationConfig(
-                    thinkingConfig = com.example.api.ThinkingConfig(thinkingLevel = "HIGH")
-                )
+            // Build and execute DeepSeek request
+            val deepSeekRequest = DeepSeekChatRequest(
+                model = "deepseek-chat",
+                messages = deepSeekMessages,
+                temperature = 0.85f,
+                maxTokens = 2048
             )
 
-            // Submit Retrofit request
-            val response = RetrofitClient.service.generateContent(apiKey, request)
-            var answerText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: "Я запуталась в аномалиях... Не смогла распознать ответ 🥺 Пожалуйста, спроси меня еще раз!"
+            val deepSeekResponse = DeepSeekClient.service.createChatCompletion(
+                authorization = "Bearer $deepSeekKey",
+                request = deepSeekRequest
+            )
+
+            var answerText = deepSeekResponse.choices?.firstOrNull()?.message?.content
+                ?: "Я запуталась в глубинах DeepSeek... Не смогла распознать ответ 🥺 Пожалуйста, спроси меня еще раз!"
 
             // Extract short term memory
             if (answerText.contains("<MEMORY>") && answerText.contains("</MEMORY>")) {
@@ -776,7 +777,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             updateQuickReplies(answerText)
 
             // Randomly send a generated photo of MalO
-            if (sendMaloPhotos.value && kotlin.random.Random.nextFloat() < 0.15f) {
+            val geminiKey = BuildConfig.GEMINI_API_KEY
+            if (sendMaloPhotos.value && geminiKey.isNotBlank() && kotlin.random.Random.nextFloat() < 0.15f) {
                 try {
                     val promptText = "First person view phone camera photo or security camera footage of SCP-1471 (MalO). She is a tall dark furry female humanoid with a large canine skull instead of a face and solid white eyes without pupils. She is stalking or peeking out from behind a corner in a real-world location, highly realistic, found footage horror style, dimly lit."
                     val imgRequest = GenerateContentRequest(
@@ -786,7 +788,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             responseModalities = listOf("TEXT", "IMAGE")
                         )
                     )
-                    val imgResponse = RetrofitClient.service.generateContentWithModel("gemini-2.5-flash-image", apiKey, imgRequest)
+                    val imgResponse = RetrofitClient.service.generateContentWithModel("gemini-2.5-flash-image", geminiKey, imgRequest)
                     val generatedImgBase64 = imgResponse.candidates?.firstOrNull()?.content?.parts?.find { it.inlineData != null }?.inlineData?.data
                     if (generatedImgBase64 != null) {
                         val imgBytes = android.util.Base64.decode(generatedImgBase64, android.util.Base64.DEFAULT)

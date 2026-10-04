@@ -147,12 +147,16 @@ fun ChatScreen(viewModel: ChatViewModel) {
         SubscriptionScreen(
             isProUser = isProUser,
             onProPurchased = { 
-                viewModel.setProUser(true) 
-                Toast.makeText(context, "Подписка Pro активирована!", Toast.LENGTH_SHORT).show()
-                viewModel.sendMessage("Я приобрел Pro-подписку.")
+                viewModel.checkSubscriptionStatus()
+                if (viewModel.isProUser.value) {
+                    Toast.makeText(context, "Подписка Pro (DeepSeek) активирована!", Toast.LENGTH_SHORT).show()
+                    viewModel.sendMessage("Я приобрел Pro-подписку.")
+                } else {
+                    Toast.makeText(context, "Ошибка валидации платежа и подписки!", Toast.LENGTH_SHORT).show()
+                }
             },
             onDowngradeToBase = {
-                viewModel.setProUser(false)
+                viewModel.downgradeToBase()
                 Toast.makeText(context, "Переход на тариф Base выполнен", Toast.LENGTH_SHORT).show()
                 viewModel.sendMessage("Я перешел обратно на тариф Base.")
             },

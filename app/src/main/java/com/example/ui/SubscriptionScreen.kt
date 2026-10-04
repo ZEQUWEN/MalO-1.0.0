@@ -86,12 +86,12 @@ fun SubscriptionScreen(
     var selectedCrypto by remember { mutableStateOf(CryptoCurrency.USDT_TRC20) }
 
     // Card input states
-    var cardNumber by remember { mutableStateOf("4242 •••• •••• 1471") }
-    var cardExpiry by remember { mutableStateOf("12/28") }
-    var cardCvc by remember { mutableStateOf("777") }
+    var cardNumber by remember { mutableStateOf("") }
+    var cardExpiry by remember { mutableStateOf("") }
+    var cardCvc by remember { mutableStateOf("") }
 
-    // Simulation toggle to allow easy testing of both success and failure outcomes
-    var simulateFailure by remember { mutableStateOf(false) }
+    // Crypto input state
+    var cryptoTxHash by remember { mutableStateOf("") }
 
     // Transaction feedback modal state
     var transactionStatus by remember { mutableStateOf(TransactionStatus.IDLE) }
@@ -100,28 +100,67 @@ fun SubscriptionScreen(
     var transactionId by remember { mutableStateOf("TX-1471-0000") }
 
     fun startTransaction() {
-        transactionStatus = TransactionStatus.PROCESSING
-        transactionId = "TX-1471-${(1000..9999).random()}"
-        coroutineScope.launch {
-            processingStageText = if (selectedPaymentMethod == PaymentMethod.CARD) {
-                "Авторизация банковской карты..."
-            } else {
-                "Ожидание транзакции в сети ${selectedCrypto.network}..."
-            }
-            delay(1200)
-
-            processingStageText = "Проверка криптографического узла SCP-1471..."
-            delay(1000)
-
-            if (simulateFailure) {
-                transactionErrorMessage = if (selectedPaymentMethod == PaymentMethod.CARD) {
-                    "Ошибка 05: Платеж отклонен банком. Превышен лимит интернет-операций."
-                } else {
-                    "Таймаут сети ${selectedCrypto.network}: неподтвержденная транзакция в мемпуле."
-                }
+        if (selectedPaymentMethod == PaymentMethod.CARD) {
+            val validationError = com.example.util.SubscriptionValidator.validateCardDetails(cardNumber, cardExpiry, cardCvc)
+            if (validationError is com.example.util.PaymentValidationResult.Failure) {
+                transactionErrorMessage = "${validationError.reason} (${validationError.errorCode})"
                 transactionStatus = TransactionStatus.FAILURE
-            } else {
-                transactionStatus = TransactionStatus.SUCCESS
+                return
+            }
+
+            transactionStatus = TransactionStatus.PROCESSING
+            coroutineScope.launch {
+                processingStageText = "Валидация алгоритма Luhn и банка-эмитента..."
+                delay(800)
+                processingStageText = "Шлюз 3D Secure: авторизация транзакции..."
+                delay(900)
+                processingStageText = "Генерация криптографической подписи Pro..."
+                delay(600)
+
+                val result = com.example.util.SubscriptionValidator.processCardPayment(context, cardNumber, cardExpiry, cardCvc)
+                if (result is com.example.util.PaymentValidationResult.Success) {
+                    transactionId = result.receipt.transactionId
+                    transactionStatus = TransactionStatus.SUCCESS
+                } else if (result is com.example.util.PaymentValidationResult.Failure) {
+                    transactionErrorMessage = result.reason
+                    transactionStatus = TransactionStatus.FAILURE
+                }
+            }
+        } else {
+            if (cryptoTxHash.isBlank()) {
+                transactionErrorMessage = "Введите TXID подтвержденной транзакции из блокчейна для проверки перевода в сети ${selectedCrypto.network}."
+                transactionStatus = TransactionStatus.FAILURE
+                return
+            }
+
+            transactionStatus = TransactionStatus.PROCESSING
+            coroutineScope.launch {
+                processingStageText = "Поиск TXID в мемпуле сети ${selectedCrypto.network}..."
+                delay(900)
+                processingStageText = "Проверка подтверждений блока и Replay Protection..."
+                delay(900)
+                processingStageText = "Генерация криптографического сертификата подписки..."
+                delay(600)
+
+                val amountStr = when (selectedCrypto) {
+                    CryptoCurrency.USDT_TRC20 -> "4.99 USDT"
+                    CryptoCurrency.TON -> "1.85 TON"
+                    CryptoCurrency.BTC -> "0.000075 BTC"
+                }
+                val result = com.example.util.SubscriptionValidator.processCryptoPayment(
+                    context,
+                    selectedCrypto.symbol,
+                    selectedCrypto.network,
+                    cryptoTxHash,
+                    amountStr
+                )
+                if (result is com.example.util.PaymentValidationResult.Success) {
+                    transactionId = result.receipt.transactionId
+                    transactionStatus = TransactionStatus.SUCCESS
+                } else if (result is com.example.util.PaymentValidationResult.Failure) {
+                    transactionErrorMessage = result.reason
+                    transactionStatus = TransactionStatus.FAILURE
+                }
             }
         }
     }
@@ -277,13 +316,14 @@ fun SubscriptionScreen(
             // Pro Plan Card (Highlighted / Featured)
             PlanCard(
                 planId = "pro",
-                title = "Pro (SCP-1471 Awakened)",
+                title = "Pro (DeepSeek Boundless)",
                 badge = if (isProUser) "АКТИВЕН" else "РЕКОМЕНДУЕТСЯ 🔥",
                 price = "$4.99",
                 pricePeriod = "/ месяц",
-                description = "Полное стирание барьеров. Безграничный доступ к живому интеллекту Gemini и генерации фото.",
+                description = "Полное снятие барьеров. Безграничный доступ к живому интеллекту DeepSeek AI и генерации фото MalO.",
                 features = listOf(
-                    FeatureItem(text = "Полноценный Gemini AI с контекстной памятью", included = true, highlight = true),
+                    FeatureItem(text = "Безграничное общение на базе DeepSeek AI", included = true, highlight = true),
+                    FeatureItem(text = "Доступ без цензурных зажимов с памятью диалогов", included = true, highlight = true),
                     FeatureItem(text = "Генерация атмосферных фото присутствия MalO", included = true, highlight = true),
                     FeatureItem(text = "Голосовые заметки, синтез и распознавание аудио", included = true),
                     FeatureItem(text = "Анализ файлов, документов PDF и видеокадров", included = true),
@@ -364,6 +404,8 @@ fun SubscriptionScreen(
                             CryptoPaymentDetails(
                                 selectedCrypto = selectedCrypto,
                                 onCryptoSelected = { selectedCrypto = it },
+                                txHash = cryptoTxHash,
+                                onTxHashChange = { cryptoTxHash = it },
                                 scpSurface = scpSurface,
                                 onCopyAddress = { address ->
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -372,44 +414,6 @@ fun SubscriptionScreen(
                                 }
                             )
                         }
-                    }
-                }
-
-                // Developer / Testing Mode toggle: allow testing failure modal
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = scpSurface.copy(alpha = 0.6f)),
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(0.5.dp, Color.Gray.copy(alpha = 0.3f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Тестирование ошибки оплаты",
-                                color = Color.LightGray,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Text(
-                                text = "Переключите для проверки модального окна неудачи",
-                                color = Color.Gray,
-                                fontSize = 10.sp
-                            )
-                        }
-                        Switch(
-                            checked = simulateFailure,
-                            onCheckedChange = { simulateFailure = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = scpErrorRed,
-                                checkedTrackColor = scpErrorRed.copy(alpha = 0.5f)
-                            )
-                        )
                     }
                 }
 
@@ -783,8 +787,6 @@ fun SubscriptionScreen(
 
                         Button(
                             onClick = {
-                                // Reset simulateFailure if user clicks retry to give them success next time or retry
-                                simulateFailure = false
                                 startTransaction()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
@@ -1072,12 +1074,33 @@ fun CardPaymentDetails(
                 )
             }
 
-            Text(
-                text = "🔒 Безопасное 256-битное шифрование протокола SCP",
-                color = Color.Gray,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🔒 Безопасное 256-битное шифрование SCP",
+                    color = Color.Gray,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                TextButton(
+                    onClick = {
+                        onCardNumberChange("4242 4242 4242 4242")
+                        onExpiryChange("12/28")
+                        onCvcChange("777")
+                    },
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(
+                        text = "Вставить тестовую карту",
+                        color = accentColor,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
         }
     }
 }
@@ -1086,6 +1109,8 @@ fun CardPaymentDetails(
 fun CryptoPaymentDetails(
     selectedCrypto: CryptoCurrency,
     onCryptoSelected: (CryptoCurrency) -> Unit,
+    txHash: String,
+    onTxHashChange: (String) -> Unit,
     scpSurface: Color,
     onCopyAddress: (String) -> Unit
 ) {
@@ -1204,6 +1229,42 @@ fun CryptoPaymentDetails(
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
+            }
+
+            // TXID input field
+            OutlinedTextField(
+                value = txHash,
+                onValueChange = onTxHashChange,
+                label = { Text("Хэш транзакции (TXID)", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
+                placeholder = { Text("Вставьте TXID из кошелька...", fontSize = 11.sp, color = Color.Gray) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFFF7931A),
+                    unfocusedBorderColor = Color.DarkGray
+                ),
+                singleLine = true
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = {
+                        val sampleHex = "a8f4c2e6b9d10457382910fae5cb3498172049eaf5bc218390d4e5fa68c719e0"
+                        onTxHashChange(sampleHex)
+                    },
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(
+                        text = "Вставить тестовый TXID",
+                        color = Color(0xFFF7931A),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
         }
     }
