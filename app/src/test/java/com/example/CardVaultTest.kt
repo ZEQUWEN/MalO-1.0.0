@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.payments.CardBrand
 import com.example.payments.CardVault
 import com.example.payments.CryptoCatalog
+import com.example.payments.SavedCard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -15,6 +16,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
+/** The local vault is a descriptor cache; YooKassa remains the card source of truth. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class CardVaultTest {
@@ -27,29 +29,40 @@ class CardVaultTest {
         CardVault.clear(context)
     }
 
+    private fun savedCard(
+        id: String,
+        brand: CardBrand = CardBrand.MIR,
+        last4: String = "4477",
+        default: Boolean = true,
+        expiry: String = "30"
+    ) = SavedCard(
+        cardId = id,
+        brandId = brand.id,
+        first6 = "220513",
+        last4 = last4,
+        expiryMonth = "12",
+        expiryYear = expiry,
+        isDefault = default
+    )
+
     @Test
-    fun `stores only non sensitive descriptors`() {
-        val card = CardVault.rememberFromInput(
-            context = context,
-            cardNumber = "2202 2012 3456 4477",
-            expiryDigits = "1230",
-            holderName = "IVAN IVANOV"
-        )
+    fun `stores only YooKassa card descriptors`() {
+        val card = CardVault.upsert(context, savedCard("gateway-card-1"))
 
         assertEquals(CardBrand.MIR, card.brand)
         assertEquals("4477", card.last4)
-        assertEquals("220220", card.first6)
+        assertEquals("220513", card.first6)
         assertEquals("12/30", card.expiryFormatted)
         assertTrue(card.isDefault)
-        // The PAN itself must not be recoverable from the vault.
+        // A descriptor contains no PAN, CVC, or acquirer token.
         val serialized = CardVault.load(context).toString()
-        assertFalse(serialized.contains("2202201234564477"))
+        assertFalse(serialized.contains("220513874477"))
     }
 
     @Test
     fun `only one card can be default`() {
-        CardVault.rememberFromInput(context, "4242424242424242", "1230", "A A")
-        val second = CardVault.rememberFromInput(context, "5536913757200011", "1130", "B B")
+        CardVault.upsert(context, savedCard("card-1", CardBrand.VISA, "4242"))
+        val second = CardVault.upsert(context, savedCard("card-2", CardBrand.MASTERCARD, "0011"))
 
         val cards = CardVault.cards(context)
         assertEquals(2, cards.size)
@@ -59,8 +72,8 @@ class CardVaultTest {
 
     @Test
     fun `make default moves the flag`() {
-        val first = CardVault.rememberFromInput(context, "4242424242424242", "1230", "A A")
-        CardVault.rememberFromInput(context, "5536913757200011", "1130", "B B")
+        val first = CardVault.upsert(context, savedCard("card-1", CardBrand.VISA, "4242"))
+        CardVault.upsert(context, savedCard("card-2", CardBrand.MASTERCARD, "0011"))
 
         CardVault.makeDefault(context, first.cardId)
         assertEquals(first.cardId, CardVault.defaultCard(context)?.cardId)
@@ -68,7 +81,7 @@ class CardVaultTest {
 
     @Test
     fun `removing the last card disables auto pay`() {
-        val card = CardVault.rememberFromInput(context, "4242424242424242", "1230", "A A")
+        val card = CardVault.upsert(context, savedCard("card-1", CardBrand.VISA, "4242"))
         CardVault.setAutoPayEnabled(context, true)
         assertTrue(CardVault.isAutoPayEnabled(context))
 
@@ -80,8 +93,8 @@ class CardVaultTest {
 
     @Test
     fun `removing the default promotes another card`() {
-        val first = CardVault.rememberFromInput(context, "4242424242424242", "1230", "A A")
-        val second = CardVault.rememberFromInput(context, "5536913757200011", "1130", "B B")
+        val first = CardVault.upsert(context, savedCard("card-1", CardBrand.VISA, "4242"))
+        val second = CardVault.upsert(context, savedCard("card-2", CardBrand.MASTERCARD, "0011"))
 
         CardVault.remove(context, second.cardId)
         assertEquals(first.cardId, CardVault.defaultCard(context)?.cardId)
@@ -89,7 +102,7 @@ class CardVaultTest {
 
     @Test
     fun `expired card is flagged`() {
-        val card = CardVault.rememberFromInput(context, "4242424242424242", "0120", "A A")
+        val card = CardVault.upsert(context, savedCard("card-1", expiry = "20"))
         assertTrue(card.isExpired)
     }
 

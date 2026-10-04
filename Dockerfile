@@ -40,8 +40,11 @@ COPY server/src /app/server/src
 COPY --from=builder /workspace/public /app/public
 COPY start.sh /app/start.sh
 
-RUN chmod +x /app/start.sh
+# Railway mounts its persistent Volume at /app/.data. Creating it in the image
+# also keeps local/container runs deterministic before a volume is attached.
+RUN mkdir -p /app/.data && chmod 700 /app/.data && chmod +x /app/start.sh
 
-ENV PORT=8080
+ENV PORT=8080 \
+    MALO_DATA_DIR=/app/.data
 EXPOSE 8080
 CMD ["./start.sh"]

@@ -55,6 +55,8 @@ test('catalog exposes crypto networks for every asset', async () => {
   assert.ok(networkIds.includes('SOLANA'));
   assert.ok(body.crypto.assets.some((a) => a.asset === 'BTC'));
   assert.deepEqual(body.card.brands.slice(0, 3), ['VISA', 'MASTERCARD', 'MIR']);
+  assert.deepEqual(body.card.paymentMethods, ['bank_card', 'sbp']);
+  assert.equal(body.card.supportsSbp, true);
 });
 
 test('network validation rejects impossible asset/network pairs', () => {
@@ -211,6 +213,40 @@ test('yookassa webhook saves the card and enables autopay, cancel works', async 
   ).json();
   assert.equal(deleted.cards.length, 0);
   assert.equal(deleted.subscription.autoRenew, false);
+});
+
+test('SBP checkout is a YooKassa one-time rail and never creates a saved card', async () => {
+  const user = 'malo-sbp-user-0003';
+  const checkout = await api('/api/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ userId: user, paymentMethod: 'sbp', saveCard: true }),
+  });
+  assert.equal(checkout.status, 201);
+  const { payment } = await checkout.json();
+  assert.equal(payment.paymentMethod, 'sbp');
+  assert.equal(payment.saveCard, false);
+  assert.ok(payment.confirmationUrl.includes('/sbp?'));
+
+  const notification = {
+    type: 'notification',
+    event: 'payment.succeeded',
+    object: {
+      id: payment.paymentId,
+      status: 'succeeded',
+      paid: true,
+      amount: { value: '499.00', currency: 'RUB' },
+      metadata: { userId: user, paymentMethod: 'sbp', saveCard: 'false' },
+      payment_method: { type: 'sbp', id: 'sbp-operation-1', saved: false },
+    },
+  };
+  const hook = await api('/api/webhooks/yookassa', { method: 'POST', body: JSON.stringify(notification) });
+  assert.equal(hook.status, 200);
+
+  const result = await (await api(`/api/cards?userId=${user}`)).json();
+  assert.equal(result.cards.length, 0);
+  assert.equal(result.subscription.status, 'active');
+  assert.equal(result.subscription.paymentMethod, 'SBP');
+  assert.equal(result.subscription.autoRenew, false);
 });
 
 test('yookassa ip allowlist matches documented subnets', () => {

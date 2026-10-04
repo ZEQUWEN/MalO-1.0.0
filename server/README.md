@@ -1,94 +1,94 @@
 # MalO payment gateway
 
-Node/Express service that handles everything money-related for the MalO
-Android app, so that **no acquirer or CryptoBot secret is ever compiled into the
-APK**.
+Node/Express gateway for the Android app. It is designed for a Railway service
+that owns the YooKassa integration, so the APK contains no YooKassa secret and
+never receives card data.
 
-* **Card billing** — ЮKassa (Visa / Mastercard / МИР), hosted 3‑D Secure page,
-  saved cards (`payment_method.id`) and recurring charges.
-* **Crypto billing** — CryptoBot (Telegram *Crypto Pay API*) invoices with an
-  explicit network choice: TRON (TRC‑20), TON, Ethereum (ERC‑20), BNB Smart
-  Chain (BEP‑20), Solana (SPL), Bitcoin, Litecoin, Polygon.
-* **Webhooks** — signature-verified, replay-protected and idempotent.
-* **Subscriptions** — 30-day periods, auto-renewal, cancel/resume.
+## Payment model
+
+* **Card checkout** — `bank_card` redirect flow in YooKassa. PAN, expiry, CVC,
+  and 3-D Secure are entered on YooKassa's page. After `payment.succeeded`, the
+  gateway stores only YooKassa's reusable `payment_method.id`; the app receives
+  only payment scheme, masked number, expiry, and default-card state.
+* **Saved cards / auto-renewal** — the server charges the selected saved
+  `payment_method.id`. It never returns that token to Android.
+* **СБП** — explicit `sbp` redirect checkout, usable for initial payment and
+  manual extension of an active subscription. СБП creates no local saved card;
+  auto-renewal remains a selected-card operation.
+* **«Мои карты»** — Android renders a swipeable card pager from `GET /api/cards`
+  and makes default/remove operations through this gateway. It has no raw-card
+  input fields.
+
+The legacy CryptoBot routes remain isolated for existing deployments, but the
+current Android checkout deliberately exposes only YooKassa cards and СБП.
 
 ## Run locally
 
 ```sh
 cd server
-npm install
+npm ci
 cp .env.example .env     # fill in the provider keys
 npm start                # http://localhost:8080
 ```
 
-Mock mode needs no credentials at all and is what the test suite uses:
+Automated tests use no real provider requests:
 
 ```sh
-MALO_MOCK_PROVIDERS=1 npm start
-npm test                 # 9 tests, node:test
+MALO_MOCK_PROVIDERS=1 npm test
 ```
 
-## Webhook endpoints
+## YooKassa webhook
 
-| Provider  | URL                                      | Verification |
-|-----------|------------------------------------------|--------------|
-| CryptoBot | `POST /api/webhooks/cryptobot`           | `crypto-pay-api-signature` = `HMAC_SHA256(SHA256(token), rawBody)` |
-| ЮKassa    | `POST /api/webhooks/yookassa`            | source IP against YooKassa's published subnets (`YOOKASSA_VERIFY_NETWORK=1`) |
+Register this HTTPS URL in YooKassa dashboard → **Интеграция →
+HTTP-уведомления**:
 
-For the production deployment (`MALO_PUBLIC_URL`, default
-`https://malo.up.railway.app`) register:
+```text
+https://malo.up.railway.app/api/webhooks/yookassa
+```
 
-* **CryptoBot** → `@CryptoBot` → *Crypto Pay* → *My Apps* → *Webhooks* →
-  `https://malo.up.railway.app/api/webhooks/cryptobot`
-* **ЮKassa** → dashboard → *Интеграция* → *HTTP-уведомления* →
-  `https://malo.up.railway.app/api/webhooks/yookassa`, events
-  `payment.succeeded`, `payment.canceled`, `refund.succeeded`.
-
-`GET /api/webhooks` returns exactly these URLs at runtime, and they are printed
-on startup — see [../DEPLOY.md](../DEPLOY.md).
-
-Both handlers:
-
-* reject deliveries with an invalid signature / untrusted source (`401`);
-* drop replays older than `CRYPTOBOT_WEBHOOK_MAX_AGE` seconds;
-* de-duplicate by `update_id` / `event:payment_id`, so a retried delivery can
-  never grant a second subscription period.
+Select `payment.succeeded`, `payment.canceled`, and `refund.succeeded`.
+`YOOKASSA_VERIFY_NETWORK=1` restricts notifications to YooKassa's documented
+source subnets. The handler is replay-protected and idempotent by
+`event:payment_id`, so a retry cannot add a second subscription period.
 
 ## App-facing API
 
-All of these accept `userId` (an opaque installation id generated on device)
-and require the `X-MalO-Client-Key` header when `MALO_CLIENT_KEY` is set.
+All app endpoints require `userId` and use `X-MalO-Client-Key` when
+`MALO_CLIENT_KEY` is set.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET`  | `/api/health` | liveness + which providers are configured |
-| `GET`  | `/api/webhooks` | the exact webhook URLs to register with each provider |
-| `GET`  | `/api/catalog` | plan price, accepted card brands, crypto asset/network matrix |
-| `POST` | `/api/crypto/invoices` | create a CryptoBot invoice (`asset`, `network`) |
-| `GET`  | `/api/crypto/invoices/:id` | poll invoice status (fallback for a late webhook) |
-| `POST` | `/api/cards/checkout` | start a ЮKassa payment, optionally saving the card |
-| `GET`  | `/api/cards/payments/:id` | poll a card payment |
-| `GET`  | `/api/cards` | list saved cards (brand, last4, expiry — never the PAN) |
-| `POST` | `/api/cards/:id/default` | choose the card used for auto-renewal |
-| `DELETE` | `/api/cards/:id` | forget the card and revoke its recurring token |
-| `GET`  | `/api/subscription` | current entitlement (HMAC-signed) |
-| `POST` | `/api/subscription/cancel` | cancel auto-renewal (`immediate: true` to revoke now) |
-| `POST` | `/api/subscription/resume` | re-enable auto-renewal |
-| `POST` | `/api/subscription/charge` | charge the saved card for the next period |
-| `POST` | `/api/subscription/run-renewals` | cron sweeper for all due subscriptions |
+| `GET` | `/api/health` | liveness and provider configuration |
+| `GET` | `/api/catalog` | plan, accepted brands, `bank_card` and `sbp` methods |
+| `POST` | `/api/checkout` | start a YooKassa checkout (`paymentMethod: bank_card\|sbp`) |
+| `POST` | `/api/cards/checkout` | compatibility alias for old Android builds |
+| `GET` | `/api/cards/payments/:id?userId=…` | poll a pending YooKassa confirmation |
+| `GET` | `/api/cards?userId=…` | saved card descriptors only — never PAN/token |
+| `POST` | `/api/cards/:id/default` | select a card for auto-renewal |
+| `DELETE` | `/api/cards/:id?userId=…` | forget a card and revoke its stored token |
+| `GET` | `/api/subscription?userId=…` | current entitlement (HMAC-signed) |
+| `POST` | `/api/subscription/cancel` | cancel auto-renewal (`immediate: true` revokes now) |
+| `POST` | `/api/subscription/resume` | re-enable selected-card auto-renewal |
+| `POST` | `/api/subscription/charge` | charge the selected saved card |
+| `POST` | `/api/subscription/run-renewals` | single-instance cron/worker endpoint |
 
-### Asset / network matrix
+Example request bodies:
 
-`GET /api/catalog` returns, for every asset, the networks it may be paid on —
-the server rejects impossible combinations (e.g. `BTC` on `SOLANA`) with
-`UNSUPPORTED_NETWORK`. The chosen network is embedded in the invoice payload
-and echoed back by the webhook, so the receipt always names the exact rail.
+```json
+{"userId":"malo-installation-id","paymentMethod":"bank_card","saveCard":true}
+```
 
-## Security notes
+```json
+{"userId":"malo-installation-id","paymentMethod":"sbp","saveCard":false}
+```
 
-* Card data never reaches this service: the PAN and the CVC are typed on the
-  acquirer's own 3‑D Secure page. We only persist `payment_method.id`.
-* Subscription payloads are signed with HMAC-SHA256 so the Android client can
-  detect tampering with its local cache.
-* State lives in a single JSON file (`MALO_DATA_DIR`). Swap `src/store.js` for
-  Postgres/Redis before scaling beyond one instance.
+## Railway and production notes
+
+Set `MALO_DATA_DIR=/app/.data` and attach a Railway Volume at that path. The
+included JSON store is safe for a single Railway instance only; use a real
+transactional store (for example PostgreSQL) before running more than one
+instance or worker.
+
+A key bundled in an APK is not a user-authentication system. For a commercial
+RuStore release, add an authenticated account/session layer before relying on
+`userId` ownership or using a client key as an access-control boundary.

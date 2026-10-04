@@ -137,16 +137,21 @@ webhooksRouter.post('/webhooks/yookassa', (req, res) => {
   switch (notification.event) {
     case 'payment.succeeded': {
       logWebhook('yookassa', 'payment.succeeded', `payment=${object.id} ${object.amount?.value ?? ''} ${object.amount?.currency ?? ''}`);
-      const wantsSave = stored ? stored.saveCard : object.metadata?.saveCard === 'true';
+      const isSbp = stored?.paymentMethod === 'sbp' || object.payment_method?.type === 'sbp';
+      const wantsSave = !isSbp && (stored ? stored.saveCard : object.metadata?.saveCard === 'true');
       const card = wantsSave ? upsertCardFromPaymentMethod(userId, object.payment_method) : null;
+      const previous = getSubscription(userId);
+      const cardId = card?.cardId || previous.cardId || null;
       activateSubscription({
         userId,
-        paymentMethod: stored?.kind === 'recurring' ? 'CARD_RECURRING' : 'CARD',
+        paymentMethod: stored?.kind === 'recurring' ? 'CARD_RECURRING' : isSbp ? 'SBP' : 'CARD',
         transactionId: object.id,
         amount: `${object.amount?.value ?? config.subscription.priceRub} ${object.amount?.currency ?? 'RUB'}`,
-        autoRenew: Boolean(card),
-        cardId: card?.cardId || getSubscription(userId).cardId || null,
-        meta: { source: 'webhook', brand: card?.brand, last4: card?.last4 },
+        // A manual SBP extension must not silently turn off an existing card
+        // auto-renewal. Conversely, SBP itself never creates a reusable token.
+        autoRenew: card?.cardId != null || (previous.autoRenew && cardId != null),
+        cardId,
+        meta: { source: 'webhook', brand: card?.brand, last4: card?.last4, paymentMethod: isSbp ? 'sbp' : 'bank_card' },
       });
       break;
     }

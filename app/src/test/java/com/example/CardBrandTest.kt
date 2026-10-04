@@ -31,8 +31,10 @@ class CardBrandTest {
         assertEquals(CardBrand.MIR, CardBrand.detect("2200"))
         assertEquals(CardBrand.MIR, CardBrand.detect("2202 2012 3456 4477"))
         assertEquals(CardBrand.MIR, CardBrand.detect("2204"))
-        // 2205 is outside the МИР allocation and belongs to Mastercard's range.
-        assertEquals(CardBrand.MASTERCARD, CardBrand.detect("2205 0000 0000 0000"))
+        assertEquals(CardBrand.MIR, CardBrand.detect("2205"))
+        assertEquals(CardBrand.MIR, CardBrand.detect("22051387"))
+        // Mastercard's 2-series starts at 2221, never at a generic 2-prefix.
+        assertEquals(CardBrand.UNKNOWN, CardBrand.detect("2206 0000"))
     }
 
     @Test

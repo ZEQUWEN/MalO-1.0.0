@@ -3,16 +3,14 @@ package com.example.payments
 import android.content.Context
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.Types
-import java.util.UUID
 
 /**
  * A card remembered for automatic renewals.
  *
  * Only non-sensitive descriptors live on the device: scheme, BIN head, last 4
- * digits, expiry and the opaque `paymentMethodId` issued by the acquirer
- * (ЮKassa). The PAN and the CVC are never persisted — they are typed on the
- * provider's own 3-D Secure page.
+ * digits and expiry. The reusable ЮKassa payment-method token stays on the
+ * gateway and is never returned to or persisted by the APK. The PAN and CVC
+ * are entered only on YooKassa's protected confirmation page.
  */
 @JsonClass(generateAdapter = true)
 data class SavedCard(
@@ -23,8 +21,6 @@ data class SavedCard(
     val expiryMonth: String? = null,
     val expiryYear: String? = null,
     val holderName: String? = null,
-    /** Re-usable acquirer token; `null` for cards added in offline demo mode. */
-    val paymentMethodId: String? = null,
     val isDefault: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     /** Optional user-visible nickname, e.g. «Основная». */
@@ -59,9 +55,11 @@ data class CardVaultState(
 )
 
 /**
- * Local, encrypted-at-rest-by-the-OS store for the card holder screen.
- * Mirrors whatever the payment gateway reports, and also works standalone when
- * the gateway is not configured (offline / demo builds).
+ * Local app-private cache for the card mini app.
+ *
+ * The YooKassa gateway is the source of truth. This cache holds only the card
+ * descriptors returned by it, so the app never implements its own card-entry
+ * form and never stores a PAN, CVC, or a provider token.
  */
 object CardVault {
 
@@ -100,39 +98,9 @@ object CardVault {
     fun setAutoPayEnabled(context: Context, enabled: Boolean): CardVaultState =
         persist(context, load(context).copy(autoPayEnabled = enabled))
 
-    /**
-     * Stores a card described by the number the user typed. The PAN itself is
-     * discarded immediately: only the scheme and the last four digits survive.
-     */
-    fun rememberFromInput(
-        context: Context,
-        cardNumber: String,
-        expiryDigits: String,
-        holderName: String,
-        paymentMethodId: String? = null,
-        makeDefault: Boolean = true
-    ): SavedCard {
-        val digits = CardBrand.digitsOf(cardNumber)
-        val card = SavedCard(
-            cardId = "card_${UUID.randomUUID()}",
-            brandId = CardBrand.detect(digits).id,
-            last4 = digits.takeLast(4),
-            first6 = digits.take(6).takeIf { it.length == 6 },
-            expiryMonth = expiryDigits.take(2).takeIf { it.length == 2 },
-            expiryYear = expiryDigits.drop(2).take(2).takeIf { it.length == 2 },
-            holderName = holderName.ifBlank { null },
-            paymentMethodId = paymentMethodId,
-            isDefault = makeDefault
-        )
-        return upsert(context, card, makeDefault)
-    }
-
     fun upsert(context: Context, card: SavedCard, makeDefault: Boolean = card.isDefault): SavedCard {
         val state = load(context)
-        val withoutDuplicate = state.cards.filterNot {
-            it.cardId == card.cardId ||
-                (card.paymentMethodId != null && it.paymentMethodId == card.paymentMethodId)
-        }
+        val withoutDuplicate = state.cards.filterNot { it.cardId == card.cardId }
         val normalized = if (makeDefault) withoutDuplicate.map { it.copy(isDefault = false) } else withoutDuplicate
         val stored = card.copy(isDefault = makeDefault || normalized.isEmpty())
         persist(
@@ -180,6 +148,4 @@ object CardVault {
         return cards(context)
     }
 
-    @Suppress("unused")
-    private val listType = Types.newParameterizedType(List::class.java, SavedCard::class.java)
 }

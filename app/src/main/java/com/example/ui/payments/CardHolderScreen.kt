@@ -1,14 +1,15 @@
 package com.example.ui.payments
 
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,20 +18,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddCard
 import androidx.compose.material.icons.filled.AutoMode
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -43,8 +45,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -54,6 +54,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,18 +68,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.payments.CardBrand
-import com.example.payments.CardInput
-import com.example.payments.CardNumberVisualTransformation
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.payments.CardVault
-import com.example.payments.ExpiryVisualTransformation
 import com.example.payments.GatewayResult
 import com.example.payments.PaymentGateway
 import com.example.payments.SavedCard
@@ -94,13 +93,13 @@ private val scpTerminalGreen = Color(0xFF00FFC4)
 private val scpErrorRed = Color(0xFFFF5252)
 
 /**
- * Card holder: stored cards with a realistic card design, auto-payment control
- * and in-app subscription cancellation.
+ * Secure card mini app.
  *
- * @param isProUser current entitlement, used to render the subscription block
- * @param periodEndMillis when the paid period expires (`null` when inactive)
- * @param autoRenewInitially whether the gateway reports auto-renewal as on
- * @param onCancelSubscription invoked after a confirmed cancellation
+ * Cards are displayed as a swipeable pager, similar to a bank application. A
+ * card can only appear here after a successful YooKassa payment: this screen
+ * never accepts, stores, or fabricates PAN/CVC data. The local vault is merely
+ * an app-private OS cache of non-sensitive descriptors returned by the gateway
+ * (brand, masked number, expiry and selected-card state).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,108 +108,88 @@ fun CardHolderScreen(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     periodEndMillis: Long? = null,
-    autoRenewInitially: Boolean = true,
+    autoRenewInitially: Boolean = false,
     onCancelSubscription: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
-
-    BackHandler { onDismiss() }
-
     val cards: SnapshotStateList<SavedCard> = remember { CardVault.cards(context).toMutableStateList() }
+    val pagerState = rememberPagerState(pageCount = { cards.size })
+
     var autoPay by remember { mutableStateOf(CardVault.isAutoPayEnabled(context) && autoRenewInitially) }
     var cancelAtPeriodEnd by remember { mutableStateOf(!autoRenewInitially) }
-    var showAddForm by remember { mutableStateOf(cards.isEmpty()) }
-    var showCancelDialog by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<SavedCard?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<SavedCard?>(null) }
+    var showCancelDialog by remember { mutableStateOf(false) }
 
-    // New card form state (digits only; the PAN is discarded after binding).
-    var number by remember { mutableStateOf("") }
-    var expiry by remember { mutableStateOf("") }
-    var cvc by remember { mutableStateOf("") }
-    var holder by remember { mutableStateOf("") }
-    var formError by remember { mutableStateOf<String?>(null) }
-
-    val brand = remember(number) { CardBrand.detect(number) }
-
-    // Pull the authoritative list from the gateway when it is configured.
-    LaunchedEffect(Unit) {
-        if (!PaymentGateway.isConfigured) return@LaunchedEffect
-        when (val result = PaymentGateway.cards(context)) {
-            is GatewayResult.Success -> {
-                val remote = result.data.cards.map { it.toSavedCard() }
-                CardVault.syncFromGateway(context, remote)
-                cards.clear()
-                cards.addAll(CardVault.cards(context))
-                result.data.subscription?.let {
-                    autoPay = it.autoRenew
-                    cancelAtPeriodEnd = it.cancelAtPeriodEnd
-                }
-                showAddForm = cards.isEmpty()
-            }
-            else -> Unit
-        }
-    }
+    BackHandler { onDismiss() }
 
     fun refreshLocal() {
         cards.clear()
         cards.addAll(CardVault.cards(context))
     }
 
-    fun submitCard() {
-        val digits = CardBrand.digitsOf(number)
-        formError = when {
-            !CardBrand.isComplete(digits) -> "Проверьте номер карты — не сходится контрольная сумма (Luhn)."
-            !CardInput.expiryValid(expiry) -> "Срок действия указан неверно или карта уже истекла."
-            !CardInput.cvcValid(cvc, brand) -> "CVC/CVV должен содержать ${brand.cvcLength} цифры."
-            holder.isBlank() -> "Укажите имя держателя, как на карте."
-            else -> null
+    fun refreshFromGateway() {
+        if (!PaymentGateway.isConfigured) return
+        scope.launch {
+            refreshing = true
+            try {
+                when (val result = PaymentGateway.cards(context)) {
+                    is GatewayResult.Success -> {
+                        CardVault.syncFromGateway(context, result.data.cards.map { it.toSavedCard() })
+                        refreshLocal()
+                        result.data.subscription?.let {
+                            autoPay = it.autoRenew
+                            cancelAtPeriodEnd = it.cancelAtPeriodEnd
+                        }
+                    }
+                    is GatewayResult.Error -> Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
+                    GatewayResult.NotConfigured -> Unit
+                }
+            } finally {
+                refreshing = false
+            }
         }
-        if (formError != null) return
+    }
 
+    /** Opens a hosted checkout without ever collecting card details in-app. */
+    fun openYooKassaCheckout(paymentMethod: String, saveCard: Boolean) {
+        if (!PaymentGateway.isConfigured) {
+            Toast.makeText(
+                context,
+                "Оплата недоступна: укажите MALO_GATEWAY_URL для ЮKassa.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
         busy = true
         scope.launch {
             try {
-                // With a configured gateway the PAN is never sent to us: we open
-                // the acquirer's 3-D Secure page and only keep the returned token.
-                var paymentMethodId: String? = null
-                if (PaymentGateway.isConfigured) {
-                    when (val result = PaymentGateway.cardCheckout(context, saveCard = true)) {
-                        is GatewayResult.Success -> {
-                            val payment = result.data.payment
-                            paymentMethodId = payment?.paymentId
-                            payment?.confirmationUrl?.let { url ->
-                                runCatching {
-                                    val intent = android.content.Intent(
-                                        android.content.Intent.ACTION_VIEW,
-                                        android.net.Uri.parse(url)
-                                    )
-                                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    context.startActivity(intent)
-                                }
-                            }
+                when (val result = PaymentGateway.cardCheckout(context, saveCard, paymentMethod)) {
+                    is GatewayResult.Success -> {
+                        val payment = result.data.payment
+                        val url = payment?.confirmationUrl
+                        if (url == null) {
+                            Toast.makeText(context, "ЮKassa не вернула ссылку для оплаты.", Toast.LENGTH_LONG).show()
+                        } else {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                            Toast.makeText(
+                                context,
+                                if (paymentMethod == "sbp") {
+                                    "Подтвердите оплату в приложении банка. После возврата карты и подписка обновятся."
+                                } else {
+                                    "Подтвердите операцию на защищённой странице ЮKassa."
+                                },
+                                Toast.LENGTH_LONG
+                            ).show()
                         }
-                        is GatewayResult.Error -> formError = result.message
-                        GatewayResult.NotConfigured -> Unit
                     }
-                }
-
-                if (formError == null) {
-                    CardVault.rememberFromInput(
-                        context = context,
-                        cardNumber = digits,
-                        expiryDigits = expiry,
-                        holderName = holder,
-                        paymentMethodId = paymentMethodId,
-                        makeDefault = true
-                    )
-                    CardVault.setAutoPayEnabled(context, true)
-                    autoPay = true
-                    refreshLocal()
-                    number = ""; expiry = ""; cvc = ""; holder = ""
-                    showAddForm = false
-                    Toast.makeText(context, "Карта сохранена для автоплатежа", Toast.LENGTH_SHORT).show()
+                    is GatewayResult.Error -> Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                    GatewayResult.NotConfigured -> Unit
                 }
             } finally {
                 busy = false
@@ -218,33 +197,59 @@ fun CardHolderScreen(
         }
     }
 
+    LaunchedEffect(Unit) { refreshFromGateway() }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshFromGateway()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .testTag("card_holder_screen"),
+            .testTag("my_cards_screen"),
         containerColor = scpBackground,
         topBar = {
             TopAppBar(
                 title = {
                     Column {
                         Text(
-                            text = "Картхолдер",
+                            text = "Мои карты",
                             color = Color.White,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
-                            text = "Сохранённые карты и автоплатёж",
-                            color = scpNeonPurple.copy(alpha = 0.8f),
+                            text = "ЮKassa • выбор и автоплатёж",
+                            color = scpNeonPurple.copy(alpha = 0.82f),
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace
                         )
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onDismiss, modifier = Modifier.testTag("card_holder_back")) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.testTag("my_cards_back")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад", tint = Color.White)
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { refreshFromGateway() },
+                        enabled = !refreshing,
+                        modifier = Modifier.testTag("my_cards_refresh")
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                color = scpTerminalGreen,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "Обновить", tint = scpTerminalGreen)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -262,8 +267,6 @@ fun CardHolderScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-
-            /* ------------------------------------------- subscription block */
             SubscriptionStatusCard(
                 isProUser = isProUser,
                 periodEndMillis = periodEndMillis,
@@ -272,6 +275,7 @@ fun CardHolderScreen(
                 hasCard = cards.isNotEmpty(),
                 onToggleAutoPay = { enabled ->
                     autoPay = enabled
+                    cancelAtPeriodEnd = !enabled
                     CardVault.setAutoPayEnabled(context, enabled)
                     if (PaymentGateway.isConfigured) {
                         scope.launch {
@@ -279,250 +283,144 @@ fun CardHolderScreen(
                             else PaymentGateway.cancelSubscription(context, immediate = false)
                         }
                     }
-                    cancelAtPeriodEnd = !enabled
                 },
                 onCancelClick = { showCancelDialog = true }
             )
 
-            /* -------------------------------------------------- saved cards */
             SectionLabel("СОХРАНЁННЫЕ КАРТЫ")
-
             if (cards.isEmpty()) {
                 EmptyCardsPlaceholder()
             } else {
-                cards.forEach { card ->
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CreditCardVisual(
-                            card = card,
-                            labelText = if (card.isDefault && autoPay) "MalO Pro • автоплатёж" else "MalO Pro"
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Text(
+                    text = "Свайпните, чтобы выбрать карту для автоплатежа.",
+                    color = Color.Gray,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                HorizontalPager(
+                    state = pagerState,
+                    contentPadding = PaddingValues(end = 34.dp),
+                    pageSpacing = 12.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .testTag("saved_cards_pager")
+                ) { page ->
+                    val card = cards[page]
+                    CreditCardVisual(
+                        card = card,
+                        labelText = if (card.isDefault && autoPay) "MalO Pro • автоплатёж" else "MalO Pro"
+                    )
+                }
+
+                PagerDots(count = cards.size, selectedIndex = pagerState.currentPage)
+
+                val selectedCard = cards.getOrNull(pagerState.currentPage)
+                if (selectedCard != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                CardVault.makeDefault(context, selectedCard.cardId)
+                                refreshLocal()
+                                if (PaymentGateway.isConfigured) {
+                                    scope.launch { PaymentGateway.makeCardDefault(context, selectedCard.cardId) }
+                                }
+                            },
+                            enabled = !selectedCard.isDefault,
+                            border = BorderStroke(1.dp, if (selectedCard.isDefault) Color.DarkGray else scpTerminalGreen),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = if (selectedCard.isDefault) Color.Gray else scpTerminalGreen
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("select_default_card")
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    CardVault.makeDefault(context, card.cardId)
-                                    refreshLocal()
-                                    if (PaymentGateway.isConfigured) {
-                                        scope.launch { PaymentGateway.makeCardDefault(context, card.cardId) }
-                                    }
-                                },
-                                enabled = !card.isDefault,
-                                border = BorderStroke(1.dp, if (card.isDefault) Color.DarkGray else scpTerminalGreen),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = if (card.isDefault) Color.Gray else scpTerminalGreen
-                                ),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (card.isDefault) "Основная" else "Сделать основной",
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = { pendingDelete = card },
-                                border = BorderStroke(1.dp, scpErrorRed.copy(alpha = 0.7f)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = scpErrorRed),
-                                modifier = Modifier.testTag("delete_card_${card.cardId}")
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Удалить карту", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                        if (card.isExpired) {
                             Text(
-                                text = "⚠ Срок действия карты истёк — автоплатёж по ней не пройдёт.",
-                                color = scpErrorRed,
+                                text = if (selectedCard.isDefault) "Выбрана для автоплатежа" else "Выбрать для автоплатежа",
                                 fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1
                             )
                         }
+                        OutlinedButton(
+                            onClick = { pendingDelete = selectedCard },
+                            border = BorderStroke(1.dp, scpErrorRed.copy(alpha = 0.7f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = scpErrorRed),
+                            modifier = Modifier.testTag("delete_card_${selectedCard.cardId}")
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Удалить карту", modifier = Modifier.size(17.dp))
+                        }
+                    }
+                    if (selectedCard.isExpired) {
+                        Text(
+                            text = "Срок действия выбранной карты истёк. Добавьте новую карту через ЮKassa.",
+                            color = scpErrorRed,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
                     }
                 }
             }
 
-            /* ---------------------------------------------------- add card */
-            if (!showAddForm) {
-                Button(
-                    onClick = { showAddForm = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("add_card_button")
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
+            Button(
+                onClick = { openYooKassaCheckout(paymentMethod = "bank_card", saveCard = true) },
+                enabled = !busy,
+                colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("add_card_yookassa")
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(color = Color.Black, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                } else {
+                    Icon(Icons.Default.AddCard, contentDescription = null, tint = Color.Black, modifier = Modifier.size(19.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Привязать новую карту",
+                        text = "Добавить карту через ЮKassa",
                         color = Color.Black,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp
+                        fontSize = 13.sp
                     )
                 }
             }
 
-            AnimatedVisibility(visible = showAddForm) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SectionLabel("НОВАЯ КАРТА")
+            SecureCheckoutNotice()
 
-                    // Live preview reacting to BIN detection.
-                    CreditCardVisual(
-                        brand = brand,
-                        numberText = CardBrand.format(number).ifBlank { "•••• •••• •••• ••••" },
-                        holderName = holder,
-                        expiryText = CardInput.formattedExpiry(expiry),
-                        isDefault = cards.isEmpty(),
-                        labelText = if (brand.isKnown) "Определено: ${brand.displayName}" else "MalO Pro • автоплатёж"
-                    )
-
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = scpSurface),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, Color.DarkGray.copy(alpha = 0.6f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            CardNumberField(
-                                value = number,
-                                onValueChange = { number = CardInput.sanitizeNumber(it); formError = null },
-                                brand = brand,
-                                accentColor = scpTerminalGreen
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = expiry,
-                                    onValueChange = { expiry = CardInput.sanitizeExpiry(it); formError = null },
-                                    label = { Text("MM/YY", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
-                                    visualTransformation = ExpiryVisualTransformation(),
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                    singleLine = true,
-                                    colors = fieldColors(scpTerminalGreen),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                OutlinedTextField(
-                                    value = cvc,
-                                    onValueChange = { cvc = CardInput.sanitizeCvc(it, brand); formError = null },
-                                    label = {
-                                        Text(
-                                            if (brand == CardBrand.AMEX) "CID" else "CVC",
-                                            fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                    },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation('•'),
-                                    singleLine = true,
-                                    colors = fieldColors(scpTerminalGreen),
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-
-                            OutlinedTextField(
-                                value = holder,
-                                onValueChange = { holder = CardInput.sanitizeHolder(it); formError = null },
-                                label = { Text("Имя держателя", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
-                                placeholder = { Text("IVAN IVANOV", fontSize = 12.sp, color = Color.Gray) },
-                                singleLine = true,
-                                colors = fieldColors(scpTerminalGreen),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            formError?.let {
-                                Text(
-                                    text = it,
-                                    color = scpErrorRed,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = Color.Gray,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (PaymentGateway.isConfigured) {
-                                        "Номер карты вводится на странице банка-эквайера (3-D Secure). Приложение хранит только последние 4 цифры и токен."
-                                    } else {
-                                        "Демо-режим: приложение сохраняет только платёжную систему, срок и последние 4 цифры."
-                                    },
-                                    color = Color.Gray,
-                                    fontSize = 10.sp,
-                                    lineHeight = 14.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (cards.isNotEmpty()) {
-                                    OutlinedButton(
-                                        onClick = { showAddForm = false; formError = null },
-                                        border = BorderStroke(1.dp, Color.Gray),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text("Отмена", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                                    }
-                                }
-                                Button(
-                                    onClick = { submitCard() },
-                                    enabled = !busy,
-                                    colors = ButtonDefaults.buttonColors(containerColor = scpTerminalGreen),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .weight(1.4f)
-                                        .height(46.dp)
-                                        .testTag("save_card_button")
-                                ) {
-                                    if (busy) {
-                                        CircularProgressIndicator(
-                                            color = Color.Black,
-                                            strokeWidth = 2.dp,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    } else {
-                                        Text(
-                                            text = "Сохранить карту",
-                                            color = Color.Black,
-                                            fontWeight = FontWeight.Bold,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 13.sp
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            OutlinedButton(
+                onClick = { openYooKassaCheckout(paymentMethod = "sbp", saveCard = false) },
+                enabled = !busy,
+                border = BorderStroke(1.dp, scpTerminalGreen.copy(alpha = 0.8f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = scpTerminalGreen),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("renew_with_sbp")
+            ) {
+                Text(
+                    text = "Продлить подписку через СБП",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
+            Text(
+                text = "СБП — разовая оплата в приложении банка. Для автоматического продления выберите сохранённую карту.",
+                color = Color.Gray,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                fontFamily = FontFamily.Monospace
+            )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(18.dp))
         }
     }
-
-    /* ----------------------------------------------------------- dialogs */
 
     if (showCancelDialog) {
         AlertDialog(
@@ -531,22 +429,13 @@ fun CardHolderScreen(
             titleContentColor = Color.White,
             textContentColor = Color.LightGray,
             icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = scpErrorRed) },
-            title = {
-                Text(
-                    "Отменить подписку Pro?",
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
-            },
+            title = { Text("Отменить подписку Pro?", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
                     text = buildString {
                         append("Автоплатёж будет отключён. ")
                         if (periodEndMillis != null && periodEndMillis > System.currentTimeMillis()) {
-                            append("Доступ к Pro сохранится до ")
-                            append(formatDate(periodEndMillis))
-                            append(", затем вернётся тариф Base.")
+                            append("Доступ сохранится до ${formatDate(periodEndMillis)}.")
                         } else {
                             append("Тариф Base вернётся немедленно.")
                         }
@@ -556,20 +445,16 @@ fun CardHolderScreen(
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showCancelDialog = false
-                        autoPay = false
-                        cancelAtPeriodEnd = true
-                        CardVault.setAutoPayEnabled(context, false)
-                        if (PaymentGateway.isConfigured) {
-                            scope.launch { PaymentGateway.cancelSubscription(context, immediate = false) }
-                        }
-                        onCancelSubscription?.invoke()
-                        Toast.makeText(context, "Подписка отменена. Автосписаний больше не будет.", Toast.LENGTH_LONG).show()
-                    },
-                    modifier = Modifier.testTag("confirm_cancel_subscription")
-                ) {
+                TextButton(onClick = {
+                    showCancelDialog = false
+                    autoPay = false
+                    cancelAtPeriodEnd = true
+                    CardVault.setAutoPayEnabled(context, false)
+                    if (PaymentGateway.isConfigured) scope.launch {
+                        PaymentGateway.cancelSubscription(context, immediate = false)
+                    }
+                    onCancelSubscription?.invoke()
+                }, modifier = Modifier.testTag("confirm_cancel_subscription")) {
                     Text("Да, отменить", color = scpErrorRed, fontFamily = FontFamily.Monospace)
                 }
             },
@@ -591,13 +476,13 @@ fun CardHolderScreen(
                 Text(
                     "Удалить карту ${card.brand.displayName} ••${card.last4}?",
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
                 )
             },
             text = {
                 Text(
-                    "Токен автоплатежа будет отозван. Если это основная карта, автопродление отключится.",
+                    "Токен автоплатежа будет удалён из сервиса. Номер карты не хранится в приложении.",
                     fontSize = 13.sp,
                     lineHeight = 18.sp
                 )
@@ -606,18 +491,15 @@ fun CardHolderScreen(
                 TextButton(onClick = {
                     CardVault.remove(context, card.cardId)
                     refreshLocal()
-                    if (PaymentGateway.isConfigured) {
-                        scope.launch { PaymentGateway.deleteCard(context, card.cardId) }
+                    if (PaymentGateway.isConfigured) scope.launch {
+                        PaymentGateway.deleteCard(context, card.cardId)
                     }
                     if (cards.isEmpty()) {
                         autoPay = false
                         CardVault.setAutoPayEnabled(context, false)
-                        showAddForm = true
                     }
                     pendingDelete = null
-                }) {
-                    Text("Удалить", color = scpErrorRed, fontFamily = FontFamily.Monospace)
-                }
+                }) { Text("Удалить", color = scpErrorRed, fontFamily = FontFamily.Monospace) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) {
@@ -627,8 +509,6 @@ fun CardHolderScreen(
         )
     }
 }
-
-/* ---------------------------------------------------------------- parts -- */
 
 @Composable
 private fun SubscriptionStatusCard(
@@ -647,9 +527,7 @@ private fun SubscriptionStatusCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -678,11 +556,10 @@ private fun SubscriptionStatusCard(
                     )
                     Text(
                         text = when {
-                            !isProUser -> "Оформите Pro, чтобы включить автоплатёж."
-                            periodEndMillis != null && cancelAtPeriodEnd ->
-                                "Отменена: доступ сохраняется до ${formatDate(periodEndMillis)}"
+                            !isProUser -> "Добавьте карту или оплатите через СБП."
+                            periodEndMillis != null && cancelAtPeriodEnd -> "Отменена: доступ до ${formatDate(periodEndMillis)}"
                             periodEndMillis != null -> "Следующее списание: ${formatDate(periodEndMillis)}"
-                            else -> "Автопродление управляется в этом разделе."
+                            else -> "Продление настраивается в этом разделе."
                         },
                         color = Color.LightGray.copy(alpha = 0.85f),
                         fontSize = 11.sp,
@@ -693,11 +570,7 @@ private fun SubscriptionStatusCard(
             }
 
             HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Default.AutoMode,
                     contentDescription = null,
@@ -706,18 +579,9 @@ private fun SubscriptionStatusCard(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
+                    Text("Автоматическое продление", color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                     Text(
-                        text = "Автоматическая оплата",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Text(
-                        text = if (hasCard) {
-                            "Списание с основной карты каждые 30 дней"
-                        } else {
-                            "Нужна сохранённая карта"
-                        },
+                        text = if (hasCard) "Списание с выбранной карты каждые 30 дней" else "Добавьте карту, чтобы включить",
                         color = Color.Gray,
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace
@@ -746,9 +610,7 @@ private fun SubscriptionStatusCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("cancel_subscription_button")
-                ) {
-                    Text("Отменить подписку", fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                }
+                ) { Text("Отменить подписку", fontSize = 12.sp, fontFamily = FontFamily.Monospace) }
             }
         }
     }
@@ -763,29 +625,62 @@ private fun EmptyCardsPlaceholder() {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 22.dp, horizontal = 16.dp),
+            modifier = Modifier.padding(vertical = 22.dp, horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Icon(Icons.Default.CreditCard, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(28.dp))
+            Text("Нет сохранённых карт", color = Color.LightGray, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
             Text(
-                text = "Нет сохранённых карт",
-                color = Color.LightGray,
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Monospace
-            )
-            Text(
-                text = "Привяжите карту, чтобы подписка продлевалась автоматически.",
+                text = "Добавьте карту на защищённой странице ЮKassa. Здесь появятся только её маска и платёжная система.",
                 color = Color.Gray,
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
                 lineHeight = 15.sp
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AcceptedBrandsRow(height = 16.dp)
-            }
+            AcceptedBrandsRow(height = 16.dp)
+        }
+    }
+}
+
+@Composable
+private fun SecureCheckoutNotice() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(alpha = 0.045f))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "Номер карты, срок действия и CVC вводятся только на странице ЮKassa. MalO хранит на сервере ЮKassa-токен, а в приложении — только маску карты.",
+            color = Color.Gray,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+}
+
+@Composable
+private fun PagerDots(count: Int, selectedIndex: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(count) { index ->
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(if (index == selectedIndex) 7.dp else 5.dp)
+                    .clip(CircleShape)
+                    .background(if (index == selectedIndex) scpTerminalGreen else Color.Gray.copy(alpha = 0.5f))
+            )
         }
     }
 }
@@ -801,65 +696,6 @@ internal fun SectionLabel(text: String) {
         letterSpacing = 1.sp
     )
 }
-
-/** Card number field with live payment-system detection in the trailing slot. */
-@Composable
-internal fun CardNumberField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    brand: CardBrand,
-    accentColor: Color,
-    modifier: Modifier = Modifier,
-    isError: Boolean = false
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text("Номер карты", fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
-        placeholder = { Text("0000 0000 0000 0000", fontSize = 13.sp, color = Color.Gray) },
-        leadingIcon = {
-            Icon(
-                Icons.Default.CreditCard,
-                contentDescription = null,
-                tint = if (brand.isKnown) accentColor else Color.Gray,
-                modifier = Modifier.size(20.dp)
-            )
-        },
-        trailingIcon = {
-            Box(modifier = Modifier.padding(end = 8.dp)) {
-                AnimatedPaymentBrandLogo(brand = brand, height = 20.dp)
-            }
-        },
-        supportingText = {
-            Text(
-                text = if (brand.isKnown) "Платёжная система: ${brand.displayName}" else "Введите номер — система определится автоматически",
-                color = if (brand.isKnown) accentColor else Color.Gray,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace
-            )
-        },
-        isError = isError,
-        visualTransformation = CardNumberVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-        singleLine = true,
-        colors = fieldColors(accentColor),
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag("card_number_field")
-    )
-}
-
-@Composable
-internal fun fieldColors(accentColor: Color) = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = Color.White,
-    unfocusedTextColor = Color.White,
-    cursorColor = accentColor,
-    focusedBorderColor = accentColor,
-    unfocusedBorderColor = Color.DarkGray,
-    focusedLabelColor = accentColor,
-    unfocusedLabelColor = Color.Gray,
-    errorBorderColor = scpErrorRed
-)
 
 internal fun formatDate(millis: Long): String =
     SimpleDateFormat("d MMMM yyyy", Locale("ru")).format(Date(millis))

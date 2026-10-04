@@ -44,10 +44,10 @@ enum class CardBrand(
             val d2 = digits.take(2).toIntOrNull()
             val d3 = digits.take(3).toIntOrNull()
             val d4 = digits.take(4).toIntOrNull()
-            val d6 = digits.take(6).toIntOrNull()
-
-            // МИР — 2200..2204 (НСПК). Checked before Mastercard's 2-series range.
-            if (d4 != null && digits.length >= 4 && d4 in 2200..2204) return MIR
+            // МИР — current public 4-digit IIN prefix range 2200..2205.
+            // This must be tested *before* Mastercard's 2-series logic. In
+            // particular, 2205 (for example, 22051387…) is МИР, not Mastercard.
+            if (d4 != null && digits.length >= 4 && d4 in 2200..2205) return MIR
             if (digits.length in 1..3 && digits.startsWith("220")) return MIR
 
             // Visa — always starts with 4.
@@ -75,9 +75,10 @@ enum class CardBrand(
             if (d4 != null && digits.length >= 4 && (d4 == 6759 || d4 == 6220)) return MAESTRO
             if (d2 != null && digits.length >= 2 && (d2 == 50 || d2 in 56..58)) return MAESTRO
 
-            // Keep 2-series pending until enough digits arrive to disambiguate.
+            // Keep 2-series pending until the 4-digit Mastercard range can be
+            // established. Never classify every 2xxxxx prefix as Mastercard:
+            // that is how МИР 2205 used to receive the wrong logo.
             if (d1 == 2 && digits.length < 4) return UNKNOWN
-            if (d6 != null && digits.length >= 6 && d1 == 2) return MASTERCARD
 
             return UNKNOWN
         }

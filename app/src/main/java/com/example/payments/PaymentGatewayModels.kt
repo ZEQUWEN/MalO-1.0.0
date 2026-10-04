@@ -20,7 +20,9 @@ data class CardOptionsDto(
     val provider: String? = null,
     val currency: String = "RUB",
     val brands: List<String> = emptyList(),
-    val supportsSavedCards: Boolean = false
+    val paymentMethods: List<String> = emptyList(),
+    val supportsSavedCards: Boolean = false,
+    val supportsSbp: Boolean = false
 )
 
 @JsonClass(generateAdapter = true)
@@ -103,7 +105,6 @@ data class CardDto(
         expiryMonth = expiryMonth,
         expiryYear = expiryYear,
         holderName = holderName,
-        paymentMethodId = null, // the acquirer token stays server-side
         isDefault = isDefault,
         createdAt = if (createdAt > 0) createdAt else System.currentTimeMillis()
     )
@@ -167,6 +168,8 @@ data class InvoiceResponse(
 data class CardCheckoutRequest(
     val userId: String,
     val saveCard: Boolean = true,
+    /** YooKassa method: `bank_card` or `sbp`. */
+    val paymentMethod: String = "bank_card",
     val returnUrl: String? = null,
     val idempotenceKey: String? = null
 )
@@ -175,6 +178,7 @@ data class CardCheckoutRequest(
 data class CardPaymentDto(
     val paymentId: String,
     val status: String = "pending",
+    val paymentMethod: String? = null,
     val confirmationUrl: String? = null,
     val amount: String? = null,
     val saveCard: Boolean = false
