@@ -59,7 +59,7 @@ class CardBrandTest {
     @Test
     fun `luhn accepts valid and rejects mistyped numbers`() {
         assertTrue(CardBrand.luhnValid("4242424242424242"))
-        assertTrue(CardBrand.luhnValid("5536913757200011"))
+        assertTrue(CardBrand.luhnValid("5555555555554444"))
         assertFalse(CardBrand.luhnValid("4242424242424243"))
     }
 
