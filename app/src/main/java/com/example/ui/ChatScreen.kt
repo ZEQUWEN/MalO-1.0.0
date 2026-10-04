@@ -162,6 +162,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
             },
             onDismiss = { showPaywall = false }
         )
+        return
     }
 
     // UI only states
@@ -531,7 +532,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
                             colors = CardDefaults.cardColors(containerColor = scpSurface),
                             shape = RoundedCornerShape(12.dp),
                             border = BorderStroke(1.dp, if (isProUser) scpNeonPurple else Color.DarkGray),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showPaywall = true }
                         ) {
                             Row(
                                 modifier = Modifier
@@ -543,7 +546,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = "Тариф: ${if (isProUser) "Pro" else "Base"}",
+                                            text = "Тариф:",
                                             color = Color.White,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 15.sp,
@@ -566,7 +569,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = if (isProUser) "Все функции Gemini AI и генерация фото активны." else "Локальный базовый контакт. Доступны Pro-возможности.",
+                                        text = if (isProUser) "Безграничный интеллект DeepSeek AI и генерация фото активны." else "Локальный базовый контакт. Доступны Pro-возможности.",
                                         color = Color.Gray,
                                         fontSize = 12.sp
                                     )
