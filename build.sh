@@ -22,7 +22,7 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command '$1' was not found."
 }
 
-# The Android Gradle plugin 9.1.x needs Java 17 and Android SDK platform 36.
+# The project uses AGP 9.1.x with Java 17 and Android SDK platform 36.1.
 require_command java
 require_command curl
 require_command unzip

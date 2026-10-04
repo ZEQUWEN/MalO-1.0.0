@@ -56,7 +56,6 @@ interface DeepSeekApiService {
 
 object DeepSeekClient {
     private const val BASE_URL = "https://api.deepseek.com/"
-    const val PRIMARY_API_KEY = "sk-e03a404f49ca498ca06b1bd851bc2f0e"
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)

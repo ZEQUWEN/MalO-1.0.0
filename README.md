@@ -8,7 +8,7 @@ it builds the APK and serves a small download page with the package.
 The build requires:
 
 - JDK **17**;
-- Android SDK Platform **36** and Build Tools **36.0.0**;
+- Android SDK Platform **36.1** and Build Tools **36.0.0**;
 - `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) pointing to that SDK, or `sdk.dir` in
   `local.properties`.
 
@@ -38,7 +38,7 @@ set a custom Railpack/Nixpacks build command in the Railway service: Railway
 must use the repository `Dockerfile`.
 
 The Docker build stage installs JDK 17, Android command-line tools, Android API
-36, and Build Tools 36.0.0; then it calls `./build.sh`. The final lightweight
+36.1, and Build Tools 36.0.0; then it calls `./build.sh`. The final lightweight
 image only starts `./start.sh`, which listens on Railway's `$PORT` and serves
 the contents of `public/`.
 
@@ -48,8 +48,15 @@ and says `start.sh not found`, that service is building a different commit,
 branch, or root directory: the tracked `start.sh`, `build.sh`, `Dockerfile`,
 and `railway.json` must be visible at the deployment root.
 
-## API key
+## API keys
 
-`.env.example` provides a placeholder `GEMINI_API_KEY` so that the APK builds
-without committing a secret. For local development, copy it to `.env` and put
-your own key there. Do not commit `.env` or a signing keystore.
+`.env.example` provides placeholder `GEMINI_API_KEY` and `DEEPSEEK_API_KEY`
+values so the APK can be built without committing secrets. For local
+development, copy it to `.env` and put your own keys there. Do not commit
+`.env`, APK artifacts, or signing keystores.
+
+Keys compiled into an Android APK can be extracted by an end user. For a
+production release, keep provider keys behind an authenticated backend instead
+of distributing them in `BuildConfig`. The Railway image intentionally builds
+with placeholders and only hosts the download page; it does not expose API
+provider secrets to the APK.
