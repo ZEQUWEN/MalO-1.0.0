@@ -41,7 +41,9 @@ jobs:
         run: ./build.sh
 
       - name: Run unit tests
-        run: .gradle/bootstrap/gradle-9.3.1/bin/gradle --no-daemon --console=plain :app:testDebugUnitTest
+        run: |
+          "${GRADLE_USER_HOME:-$GITHUB_WORKSPACE/.gradle}/bootstrap/gradle-9.3.1/bin/gradle" \
+            --no-daemon --console=plain :app:testDebugUnitTest
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
