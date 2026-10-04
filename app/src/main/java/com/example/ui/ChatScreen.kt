@@ -145,14 +145,19 @@ fun ChatScreen(viewModel: ChatViewModel) {
     }
 
     if (showPaywall) {
-        PaywallDialog(
-            onDismiss = { showPaywall = false },
+        SubscriptionScreen(
+            isProUser = isProUser,
             onProPurchased = { 
                 viewModel.setProUser(true) 
-                Toast.makeText(context, "Подписка Pro активирована", Toast.LENGTH_SHORT).show()
-                // MalO reacts to pro subscription
+                Toast.makeText(context, "Подписка Pro активирована!", Toast.LENGTH_SHORT).show()
                 viewModel.sendMessage("Я приобрел Pro-подписку.")
-            }
+            },
+            onDowngradeToBase = {
+                viewModel.setProUser(false)
+                Toast.makeText(context, "Переход на тариф Base выполнен", Toast.LENGTH_SHORT).show()
+                viewModel.sendMessage("Я перешел обратно на тариф Base.")
+            },
+            onDismiss = { showPaywall = false }
         )
     }
 
@@ -507,6 +512,69 @@ fun ChatScreen(viewModel: ChatViewModel) {
                             fontSize = 18.sp,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
+
+                        // Subscription Card
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = scpSurface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, if (isProUser) scpNeonPurple else Color.DarkGray),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "Тариф: ${if (isProUser) "Pro" else "Base"}",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            color = if (isProUser) scpNeonPurple else Color.DarkGray,
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = if (isProUser) "PRO ACTIVE" else "BASE FREE",
+                                                color = if (isProUser) Color.Black else Color.LightGray,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = if (isProUser) "Все функции Gemini AI и генерация фото активны." else "Локальный базовый контакт. Доступны Pro-возможности.",
+                                        color = Color.Gray,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                Button(
+                                    onClick = { showPaywall = true },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isProUser) Color.DarkGray else scpNeonPurple
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (isProUser) "Тарифы" else "Улучшить",
+                                        color = if (isProUser) Color.White else Color.Black,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
 
                         // Intensity Card
                         val intensity by viewModel.intensityValue.collectAsState()
