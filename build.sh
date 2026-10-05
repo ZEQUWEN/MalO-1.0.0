@@ -22,7 +22,7 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command '$1' was not found."
 }
 
-# The project uses AGP 9.1.x with Java 17 and Android SDK platform 36.1.
+# The project uses AGP 9.1.x with Java 17 and Android SDK platform 35.
 require_command java
 require_command curl
 require_command unzip
@@ -66,6 +66,7 @@ echo "[MalO build] Building debug APK with Gradle $GRADLE_VERSION..."
 "$GRADLE_BIN" --no-daemon --console=plain :app:assembleDebug
 
 [ -f "$APK_PATH" ] || fail "Gradle completed, but the expected APK was not created: $APK_PATH"
+unzip -t "$APK_PATH" >/dev/null || fail "Gradle output is not a valid APK archive: $APK_PATH"
 
 mkdir -p "$DISTRIBUTION_DIR"
 cp "$APK_PATH" "$DISTRIBUTION_DIR/MalO-1.0.0.apk"

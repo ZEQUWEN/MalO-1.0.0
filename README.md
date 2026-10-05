@@ -8,7 +8,7 @@ it builds the APK and serves a small download page with the package.
 The build requires:
 
 - JDK **17**;
-- Android SDK Platform **36.1** and Build Tools **36.0.0**;
+- Android SDK Platform **35** and Build Tools **35.0.0**;
 - `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) pointing to that SDK, or `sdk.dir` in
   `local.properties`.
 
@@ -38,7 +38,7 @@ set a custom Railpack/Nixpacks build command in the Railway service: Railway
 must use the repository `Dockerfile`.
 
 The Docker build stage installs JDK 17, Android command-line tools, Android API
-36.1, and Build Tools 36.0.0; then it calls `./build.sh`. The final lightweight
+35, and Build Tools 35.0.0; then it calls `./build.sh`. The final lightweight
 image only starts `./start.sh`, which listens on Railway's `$PORT` and serves
 the contents of `public/`.
 

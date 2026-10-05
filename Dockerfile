@@ -22,7 +22,7 @@ RUN apt-get update \
 ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
 
 RUN yes | sdkmanager --licenses >/dev/null \
-    && sdkmanager "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
+    && sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
 WORKDIR /workspace
 COPY . .
