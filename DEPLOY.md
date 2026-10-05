@@ -291,20 +291,23 @@ with the gateway host. Walk the three causes in order.
    URLs. Shared `*.up.railway.app` space is the part that gets filtered
    wholesale; a dedicated domain is not.
 
-#### Reading the resolved IP
+#### Diagnosing the resolved IP
 
-A Railway-generated domain must resolve into Railway's edge range — in practice
-`66.33.22.x` for `*.up.railway.app`. If the device reports a connect failure to
-some *other* address (e.g. `failed to connect to malo.up.railway.app/69.46.46.21`),
-the resolver on that network returned an address Railway does not serve, so TLS
-can never complete there. Check from the same network:
+Railway's public edge addresses can change, so do not classify an address as
+invalid from a hard-coded IP range. For example, `69.46.46.21` is currently
+announced by AS400940 (Railway). Compare the answers from the device's resolver
+and a public resolver, using the exact hostname configured on the service:
 
 ```bash
-dig +short malo.up.railway.app            # what the local resolver says
-dig +short @1.1.1.1 malo.up.railway.app   # what a clean resolver says
+dig +short <service-domain>            # what the local resolver says
+dig +short @1.1.1.1 <service-domain>   # compare with a public resolver
 ```
 
-Two different answers = DNS substitution by the network/ISP, not a gateway
-fault. A timeout (`after 15000ms`) rather than a refused connection points the
-same way: packets are dropped silently. A custom domain avoids both the
-wholesale `*.up.railway.app` filtering and that substituted answer.
+Different answers suggest resolver/network interference, but matching answers
+do not prove that the route is reachable. A connection timeout (`after
+15000ms`) means the TCP connection to port 443 did not complete in time; it can
+be caused by network filtering/routing, an unassigned or incorrect hostname, or
+an unavailable service. Check `/api/health` from the same network and compare
+with Railway deploy logs. A custom domain can avoid filtering specific to
+`*.up.railway.app`, but it only works after both Railway-provided DNS records
+are configured and the domain is verified.
