@@ -90,7 +90,7 @@ export function createApp() {
         setHeaders: (res, filePath) => {
           if (filePath.endsWith('.apk')) {
             res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-            res.setHeader('Cache-Control', 'public, max-age=300');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
           } else if (/\.(png|ico|webmanifest|svg)$/.test(filePath)) {
             res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
           }
