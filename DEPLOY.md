@@ -253,4 +253,40 @@ secret key are configured. `GET /api/catalog` must include:
 | `401 UNTRUSTED_SOURCE` on a YooKassa notification | Verify that `YOOKASSA_VERIFY_NETWORK=1` uses the published source ranges. Disable it only temporarily while diagnosing. |
 | Payment succeeded but Pro is not active | Check the YooKassa webhook delivery log and the Railway log; the gateway is idempotent, so it is safe for YooKassa to retry. |
 | Saved cards/subscriptions disappear after deploy | Attach the Volume to `/app/.data` and set `MALO_DATA_DIR=/app/.data`. |
+| App shows «failed to connect to malo.up.railway.app» (`GATEWAY_UNREACHABLE` / `GATEWAY_TIMEOUT` / `GATEWAY_TLS_BLOCKED` / `GATEWAY_DNS_FAILED`) | The request never reached the gateway, so **CryptoBot was never called** — this is not a payment decline. See «Gateway unreachable» below. |
 | Railway says `start.sh not found` | The service points at another branch/commit or an incorrect root directory. `Dockerfile`, `start.sh`, and `railway.json` must be at repository root. |
+
+### Gateway unreachable («failed to connect to …»)
+
+The Android client talks only to this gateway; `pay.crypt.bot` is called
+*server-side* from Railway. A connection error on the device therefore says
+nothing about Crypto Pay — it means the device could not open a TLS session
+with the gateway host. Walk the three causes in order.
+
+1. **Is the deployment alive?** From any network outside the device:
+
+   ```bash
+   curl -sS -o /dev/null -w '%{http_code}\n' https://malo.up.railway.app/api/health
+   ./server/scripts/diagnose-gateway.sh --url https://malo.up.railway.app --key "$MALO_CLIENT_KEY"
+   ```
+
+   No answer anywhere → the Railway service is crashed, sleeping, or the
+   generated domain changed. Check the Railway deploy log and that
+   `MALO_PUBLIC_URL` still matches the real domain (a changed domain also
+   leaves the registered Crypto Pay webhook pointing at the old deployment).
+
+2. **Does the app point at the right host?** `MALO_GATEWAY_URL` is baked into
+   the APK at build time from `.env`. An APK built before a domain change keeps
+   calling the dead host; rebuild and reinstall.
+
+3. **Network-level filtering (typical from RU ISPs).** If the health check
+   succeeds from a server abroad but the phone fails — especially with
+   `GATEWAY_TLS_BLOCKED` (TLS handshake reset after Client Hello) or with
+   `GATEWAY_DNS_FAILED` — the device's network is filtering the route, not the
+   payment flow. Verify by retrying on mobile data vs Wi-Fi, and by running
+   `curl -v https://malo.up.railway.app/api/health` from the same network.
+   The durable fix is to serve the gateway from a custom domain with its own
+   certificate (Railway → Settings → Networking → Custom Domain), then set
+   `MALO_PUBLIC_URL` and `MALO_GATEWAY_URL` to it and re-register both webhook
+   URLs. Shared `*.up.railway.app` space is the part that gets filtered
+   wholesale; a dedicated domain is not.
