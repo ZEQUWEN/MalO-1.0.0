@@ -99,6 +99,12 @@ enum class PaymentMethod {
     CRYPTO
 }
 
+private fun PaymentMethod.apiId(): String = when (this) {
+    PaymentMethod.CARD -> "bank_card"
+    PaymentMethod.SBP -> "sbp"
+    PaymentMethod.CRYPTO -> "cryptobot"
+}
+
 enum class TransactionStatus {
     IDLE,
     PROCESSING,
@@ -135,6 +141,10 @@ fun SubscriptionScreen(
     var showCardHolder by remember { mutableStateOf(false) }
     var selectedPlan by remember { mutableStateOf("pro") }
     var selectedPaymentMethod by remember { mutableStateOf(PaymentMethod.CARD) }
+    var enabledPaymentMethods by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var paymentMethodsLoaded by remember { mutableStateOf(false) }
+    var paymentMethodsError by remember { mutableStateOf<String?>(null) }
+    var paymentMethodsRetry by remember { mutableStateOf(0) }
 
     // YooKassa never exposes card data to this screen. The only choice made
     // here is whether a card payment may be saved for future auto-renewal.
@@ -158,6 +168,35 @@ fun SubscriptionScreen(
     var receiptAmountLabel by remember { mutableStateOf("499 ₽") }
 
     BackHandler { if (showCardHolder) showCardHolder = false else onDismiss() }
+
+    LaunchedEffect(paymentMethodsRetry) {
+        when (val result = PaymentGateway.paymentMethods()) {
+            is GatewayResult.Success -> {
+                val available = result.data.methods.map { it.id }.toSet()
+                enabledPaymentMethods = available
+                paymentMethodsLoaded = true
+                paymentMethodsError = null
+                if (selectedPaymentMethod.apiId() !in available) {
+                    selectedPaymentMethod = when {
+                        "bank_card" in available -> PaymentMethod.CARD
+                        "sbp" in available -> PaymentMethod.SBP
+                        "cryptobot" in available -> PaymentMethod.CRYPTO
+                        else -> PaymentMethod.CARD
+                    }
+                }
+            }
+            is GatewayResult.Error -> {
+                enabledPaymentMethods = emptySet()
+                paymentMethodsLoaded = true
+                paymentMethodsError = result.message
+            }
+            GatewayResult.NotConfigured -> {
+                enabledPaymentMethods = emptySet()
+                paymentMethodsLoaded = true
+                paymentMethodsError = "Шлюз платежей не настроен для этой сборки."
+            }
+        }
+    }
 
     if (showCardHolder) {
         CardHolderScreen(
@@ -523,119 +562,143 @@ fun SubscriptionScreen(
                     letterSpacing = 1.sp
                 )
 
-                Surface(
-                    color = scpSurface,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color.DarkGray.copy(alpha = 0.5f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(4.dp)
+                if (paymentMethodsLoaded && enabledPaymentMethods.isNotEmpty()) {
+                    Surface(
+                        color = scpSurface,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color.DarkGray.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        PaymentMethodTab(
-                            title = "Карта",
-                            icon = Icons.Default.CreditCard,
-                            isSelected = selectedPaymentMethod == PaymentMethod.CARD,
-                            activeColor = scpTerminalGreen,
-                            modifier = Modifier.weight(1f),
-                            onClick = { selectedPaymentMethod = PaymentMethod.CARD }
-                        )
-                        PaymentMethodTab(
-                            title = "СБП",
-                            icon = Icons.Default.AccountBalanceWallet,
-                            isSelected = selectedPaymentMethod == PaymentMethod.SBP,
-                            activeColor = scpTerminalGreen,
-                            modifier = Modifier.weight(1f),
-                            onClick = { selectedPaymentMethod = PaymentMethod.SBP }
-                        )
-                        PaymentMethodTab(
-                            title = "CryptoBot",
-                            icon = Icons.Default.CurrencyBitcoin,
-                            isSelected = selectedPaymentMethod == PaymentMethod.CRYPTO,
-                            activeColor = scpCryptoOrange,
-                            modifier = Modifier.weight(1f),
-                            onClick = { selectedPaymentMethod = PaymentMethod.CRYPTO }
-                        )
+                        Row(modifier = Modifier.fillMaxWidth().padding(4.dp)) {
+                            if ("bank_card" in enabledPaymentMethods) {
+                                PaymentMethodTab(
+                                    title = "Карта",
+                                    icon = Icons.Default.CreditCard,
+                                    isSelected = selectedPaymentMethod == PaymentMethod.CARD,
+                                    activeColor = scpTerminalGreen,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { selectedPaymentMethod = PaymentMethod.CARD }
+                                )
+                            }
+                            if ("sbp" in enabledPaymentMethods) {
+                                PaymentMethodTab(
+                                    title = "СБП",
+                                    icon = Icons.Default.AccountBalanceWallet,
+                                    isSelected = selectedPaymentMethod == PaymentMethod.SBP,
+                                    activeColor = scpTerminalGreen,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { selectedPaymentMethod = PaymentMethod.SBP }
+                                )
+                            }
+                            if ("cryptobot" in enabledPaymentMethods) {
+                                PaymentMethodTab(
+                                    title = "CryptoBot",
+                                    icon = Icons.Default.CurrencyBitcoin,
+                                    isSelected = selectedPaymentMethod == PaymentMethod.CRYPTO,
+                                    activeColor = scpCryptoOrange,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { selectedPaymentMethod = PaymentMethod.CRYPTO }
+                                )
+                            }
+                        }
                     }
-                }
 
-                AnimatedContent(
-                    targetState = selectedPaymentMethod,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "payment_panel"
-                ) { method ->
-                    when (method) {
-                        PaymentMethod.CARD, PaymentMethod.SBP -> YooKassaPaymentDetails(
-                            paymentMethod = method,
-                            saveCard = saveCardForAutoPay,
-                            onSaveCardChange = { saveCardForAutoPay = it },
-                            scpSurface = scpSurface,
-                            accentColor = scpTerminalGreen,
-                            onOpenMyCards = { showCardHolder = true }
-                        )
-                        PaymentMethod.CRYPTO -> CryptoBotPaymentDetails(
-                            asset = selectedCryptoAsset,
-                            onAssetChange = {
-                                selectedCryptoAsset = it
-                                activeCryptoInvoice = null
-                                cryptoPolling = false
-                            },
-                            invoice = activeCryptoInvoice,
-                            scpSurface = scpSurface,
-                            accentColor = scpCryptoOrange,
-                            onOpenInvoice = { url ->
-                                runCatching {
+                    AnimatedContent(
+                        targetState = selectedPaymentMethod,
+                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        label = "payment_panel"
+                    ) { method ->
+                        when (method) {
+                            PaymentMethod.CARD, PaymentMethod.SBP -> YooKassaPaymentDetails(
+                                paymentMethod = method,
+                                saveCard = saveCardForAutoPay,
+                                onSaveCardChange = { saveCardForAutoPay = it },
+                                scpSurface = scpSurface,
+                                accentColor = scpTerminalGreen,
+                                onOpenMyCards = { showCardHolder = true }
+                            )
+                            PaymentMethod.CRYPTO -> CryptoBotPaymentDetails(
+                                asset = selectedCryptoAsset,
+                                onAssetChange = {
+                                    selectedCryptoAsset = it
+                                    activeCryptoInvoice = null
+                                    cryptoPolling = false
+                                },
+                                invoice = activeCryptoInvoice,
+                                scpSurface = scpSurface,
+                                accentColor = scpCryptoOrange,
+                                onOpenInvoice = { url ->
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (selectedPaymentMethod == PaymentMethod.CRYPTO) {
+                                val existing = activeCryptoInvoice
+                                if (existing?.payUrl != null) {
                                     context.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(existing.miniAppUrl ?: existing.payUrl))
                                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     )
+                                } else {
+                                    createCryptoBotInvoice()
                                 }
+                            } else {
+                                payWithYooKassa()
                             }
+                        },
+                        enabled = selectedPaymentMethod.apiId() in enabledPaymentMethods &&
+                            transactionStatus != TransactionStatus.PROCESSING,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selectedPaymentMethod == PaymentMethod.CRYPTO) scpCryptoOrange else scpTerminalGreen
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("pay_button")
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = when (selectedPaymentMethod) {
+                                PaymentMethod.CARD -> "Перейти к оплате картой"
+                                PaymentMethod.SBP -> "Оплатить через СБП"
+                                PaymentMethod.CRYPTO -> if (activeCryptoInvoice == null) "Выставить счёт в CryptoBot" else "Открыть счёт CryptoBot"
+                            },
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                }
-
-                Button(
-                    onClick = {
-                        if (selectedPaymentMethod == PaymentMethod.CRYPTO) {
-                            val existing = activeCryptoInvoice
-                            if (existing?.payUrl != null) {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(existing.miniAppUrl ?: existing.payUrl))
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                )
-                            } else {
-                                createCryptoBotInvoice()
-                            }
-                        } else {
-                            payWithYooKassa()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selectedPaymentMethod == PaymentMethod.CRYPTO) scpCryptoOrange else scpTerminalGreen
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .testTag("pay_button")
-                ) {
-                    Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+                } else {
                     Text(
-                        text = when (selectedPaymentMethod) {
-                            PaymentMethod.CARD -> "Перейти к оплате картой"
-                            PaymentMethod.SBP -> "Оплатить через СБП"
-                            PaymentMethod.CRYPTO -> if (activeCryptoInvoice == null) "Выставить счёт в CryptoBot" else "Открыть счёт CryptoBot"
+                        text = if (paymentMethodsLoaded) {
+                            paymentMethodsError ?: "Способы оплаты сейчас временно недоступны."
+                        } else {
+                            "Проверяем доступность способов оплаты..."
                         },
-                        color = Color.Black,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = Color.Gray,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
                     )
+                    if (paymentMethodsLoaded && paymentMethodsError != null) {
+                        TextButton(onClick = { paymentMethodsRetry++ }) {
+                            Text("Повторить проверку", color = scpNeonPurple)
+                        }
+                    }
                 }
             } else if (isProUser) {
                 Card(

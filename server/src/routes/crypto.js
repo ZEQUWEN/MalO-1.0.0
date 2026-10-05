@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { config } from '../config.js';
+import { config, isCryptoBotConfigured } from '../config.js';
 import { db, newId } from '../store.js';
 import { findAsset, isNetworkAllowed, NETWORKS } from '../networks.js';
 import { CryptoBotError, cryptobot } from '../providers/cryptobot.js';
@@ -202,6 +202,13 @@ cryptoRouter.post(
   requireClientKey,
   requireUserId,
   asyncRoute(async (req, res) => {
+    if (!isCryptoBotConfigured()) {
+      return res.status(503).json({
+        ok: false,
+        error: { code: 'CRYPTOBOT_NOT_CONFIGURED', message: 'CryptoBot checkout is not configured' },
+      });
+    }
+
     const assetCode = String(req.body?.asset || 'USDT').toUpperCase();
     const network = String(req.body?.network || '').toUpperCase() || findAsset(assetCode)?.defaultNetwork;
     const asset = findAsset(assetCode);
@@ -219,6 +226,7 @@ cryptoRouter.post(
     try {
       amount = await quoteAmount(assetCode);
     } catch (error) {
+      if (error?.code === 'CRYPTOBOT_CIRCUIT_OPEN') throw error;
       throw Object.assign(new Error('Crypto Pay exchange rate is temporarily unavailable'), {
         status: 502,
         code: 'RATE_UNAVAILABLE',

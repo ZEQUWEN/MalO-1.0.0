@@ -11,6 +11,7 @@
 
 import crypto from 'node:crypto';
 import { config } from '../config.js';
+import { withProviderCircuitBreaker } from '../provider-breaker.js';
 
 export class CryptoBotError extends Error {
   constructor(message, { status = 502, code = 'CRYPTOBOT_ERROR', details = null, retryAfter = null } = {}) {
@@ -36,73 +37,88 @@ async function call(method, params = {}) {
 
   if (config.mockProviders) return mockCall(method, params);
 
-  let response;
-  try {
-    response = await fetch(`${config.cryptobot.apiBase}/${method}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Crypto-Pay-API-Token': config.cryptobot.token,
-      },
-      body: JSON.stringify(params),
-      signal: AbortSignal.timeout(config.cryptobot.requestTimeoutMs),
-    });
-  } catch (error) {
-    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
-    throw new CryptoBotError(timedOut ? `Crypto Pay ${method} timed out` : `Crypto Pay ${method} is unavailable`, {
-      status: 502,
-      code: timedOut ? 'CRYPTOBOT_TIMEOUT' : 'CRYPTOBOT_UNAVAILABLE',
-    });
-  }
-
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    throw new CryptoBotError(`Crypto Pay ${method}: non-JSON response (${response.status})`, {
-      code: 'CRYPTOBOT_BAD_RESPONSE',
-      details: { upstreamStatus: response.status },
-    });
-  }
-
-  if (!response.ok || body.ok === false) {
-    const upstreamStatus = response.status;
-    const upstreamError = body?.error ?? null;
-
-    // Collapsing every provider failure into one opaque 502 is what makes a
-    // Crypto Pay outage indistinguishable from a revoked token or a genuine
-    // rate limit. Keep the cause in the error code so the operator is not left
-    // guessing which of the three it was.
-    if (upstreamStatus === 429) {
-      const header = Number(response.headers?.get?.('retry-after'));
-      throw new CryptoBotError(`Crypto Pay rate limit reached on ${method}`, {
-        status: 429,
-        code: 'CRYPTOBOT_RATE_LIMITED',
-        retryAfter: Number.isFinite(header) && header > 0 ? header : null,
-        details: { upstreamStatus, error: upstreamError },
+  return withProviderCircuitBreaker('cryptobot', async () => {
+    let response;
+    try {
+      response = await fetch(`${config.cryptobot.apiBase}/${method}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Crypto-Pay-API-Token': config.cryptobot.token,
+        },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(config.cryptobot.requestTimeoutMs),
       });
-    }
-
-    // 401/403 here means CRYPTOBOT_TOKEN is wrong, revoked, or points at the
-    // other network (mainnet token against testnet-pay, or the reverse).
-    if (upstreamStatus === 401 || upstreamStatus === 403) {
-      throw new CryptoBotError(`Crypto Pay rejected the app token on ${method}`, {
+    } catch (error) {
+      const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+      throw new CryptoBotError(timedOut ? `Crypto Pay ${method} timed out` : `Crypto Pay ${method} is unavailable`, {
         status: 502,
-        code: 'CRYPTOBOT_UNAUTHORIZED',
-        details: { upstreamStatus, error: upstreamError, apiBase: config.cryptobot.apiBase },
+        code: timedOut ? 'CRYPTOBOT_TIMEOUT' : 'CRYPTOBOT_UNAVAILABLE',
       });
     }
 
-    throw new CryptoBotError(upstreamError?.name || `Crypto Pay ${method} failed`, {
-      details: { upstreamStatus, error: upstreamError ?? body },
-    });
-  }
-  if (!Object.hasOwn(body || {}, 'result')) {
-    throw new CryptoBotError(`Crypto Pay ${method}: response has no result`, {
-      code: 'CRYPTOBOT_BAD_RESPONSE',
-    });
-  }
-  return body.result;
+    let text;
+    try {
+      text = await response.text();
+    } catch {
+      throw new CryptoBotError(`Crypto Pay ${method}: response could not be read`, {
+        status: 502,
+        code: 'CRYPTOBOT_UNAVAILABLE',
+        details: { upstreamStatus: response.status },
+      });
+    }
+
+    let body;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      throw new CryptoBotError(`Crypto Pay ${method}: non-JSON response (${response.status})`, {
+        code: 'CRYPTOBOT_BAD_RESPONSE',
+        details: { upstreamStatus: response.status },
+      });
+    }
+
+    if (!response.ok || body.ok === false) {
+      const upstreamStatus = response.status;
+      const upstreamError = body?.error ?? null;
+
+      if (upstreamStatus === 429) {
+        const header = Number(response.headers?.get?.('retry-after'));
+        throw new CryptoBotError(`Crypto Pay rate limit reached on ${method}`, {
+          status: 429,
+          code: 'CRYPTOBOT_RATE_LIMITED',
+          retryAfter: Number.isFinite(header) && header > 0 ? header : null,
+          details: { upstreamStatus, error: upstreamError },
+        });
+      }
+
+      if (upstreamStatus === 401 || upstreamStatus === 403) {
+        throw new CryptoBotError(`Crypto Pay rejected the app token on ${method}`, {
+          status: 502,
+          code: 'CRYPTOBOT_UNAUTHORIZED',
+          details: { upstreamStatus, error: upstreamError, apiBase: config.cryptobot.apiBase },
+        });
+      }
+
+      throw new CryptoBotError(upstreamError?.name || `Crypto Pay ${method} failed`, {
+        details: { upstreamStatus, error: upstreamError ?? body },
+      });
+    }
+    if (!Object.hasOwn(body || {}, 'result')) {
+      throw new CryptoBotError(`Crypto Pay ${method}: response has no result`, {
+        code: 'CRYPTOBOT_BAD_RESPONSE',
+      });
+    }
+    return body.result;
+  }, {
+    shouldTrip: (error) =>
+      error?.code === 'CRYPTOBOT_TIMEOUT' ||
+      error?.code === 'CRYPTOBOT_UNAVAILABLE' ||
+      error?.code === 'CRYPTOBOT_UNAUTHORIZED' ||
+      error?.code === 'CRYPTOBOT_RATE_LIMITED' ||
+      error?.details?.upstreamStatus === 429 ||
+      error?.details?.upstreamStatus >= 500,
+  });
 }
 
 /* ------------------------------------------------------------------ mock -- */

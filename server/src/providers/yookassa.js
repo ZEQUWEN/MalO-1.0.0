@@ -17,14 +17,16 @@
 
 import crypto from 'node:crypto';
 import { config } from '../config.js';
+import { withProviderCircuitBreaker } from '../provider-breaker.js';
 
 export class YooKassaError extends Error {
-  constructor(message, { status = 502, code = 'YOOKASSA_ERROR', details = null } = {}) {
+  constructor(message, { status = 502, code = 'YOOKASSA_ERROR', details = null, retryAfter = null } = {}) {
     super(message);
     this.name = 'YooKassaError';
     this.status = status;
     this.code = code;
     this.details = details;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -39,32 +41,68 @@ async function call(path, { method = 'POST', body, idempotenceKey } = {}) {
   }
 
   const auth = Buffer.from(`${config.yookassa.shopId}:${config.yookassa.secretKey}`).toString('base64');
-  const response = await fetch(`${config.yookassa.apiBase}${path}`, {
-    method,
-    headers: {
-      Authorization: `Basic ${auth}`,
-      'Content-Type': 'application/json',
-      ...(method === 'POST' ? { 'Idempotence-Key': idempotenceKey || crypto.randomUUID() } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
+  return withProviderCircuitBreaker('yookassa', async () => {
+    let response;
+    try {
+      response = await fetch(`${config.yookassa.apiBase}${path}`, {
+        method,
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/json',
+          ...(method === 'POST' ? { 'Idempotence-Key': idempotenceKey || crypto.randomUUID() } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(config.yookassa.requestTimeoutMs),
+      });
+    } catch (error) {
+      const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+      throw new YooKassaError(
+        timedOut ? `YooKassa ${path} timed out` : `YooKassa ${path} is unavailable`,
+        { status: 502, code: timedOut ? 'YOOKASSA_TIMEOUT' : 'YOOKASSA_UNAVAILABLE' },
+      );
+    }
+
+    let text;
+    try {
+      text = await response.text();
+    } catch {
+      throw new YooKassaError(`YooKassa ${path} response could not be read`, {
+        status: 502,
+        code: 'YOOKASSA_UNAVAILABLE',
+        details: { upstreamStatus: response.status },
+      });
+    }
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      throw new YooKassaError(`YooKassa ${path}: non-JSON response (${response.status})`, {
+        details: { upstreamStatus: response.status },
+      });
+    }
+
+    if (!response.ok) {
+      const unauthorized = response.status === 401 || response.status === 403;
+      throw new YooKassaError(payload?.description || `YooKassa ${path} failed`, {
+        status: unauthorized || response.status >= 500 ? 502 : response.status === 429 ? 429 : 400,
+        code: unauthorized ? 'YOOKASSA_UNAUTHORIZED' : payload?.code || 'YOOKASSA_ERROR',
+        retryAfter: response.status === 429
+          ? Number(response.headers?.get?.('retry-after')) || null
+          : null,
+        details: { ...(payload || {}), upstreamStatus: response.status },
+      });
+    }
+    return payload;
+  }, {
+    shouldTrip: (error) =>
+      error?.code === 'YOOKASSA_TIMEOUT' ||
+      error?.code === 'YOOKASSA_UNAVAILABLE' ||
+      error?.code === 'YOOKASSA_UNAUTHORIZED' ||
+      error?.details?.upstreamStatus === 401 ||
+      error?.details?.upstreamStatus === 403 ||
+      error?.details?.upstreamStatus === 429 ||
+      error?.details?.upstreamStatus >= 500,
   });
-
-  const text = await response.text();
-  let payload = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    throw new YooKassaError(`YooKassa ${path}: non-JSON response (${response.status})`);
-  }
-
-  if (!response.ok) {
-    throw new YooKassaError(payload?.description || `YooKassa ${path} failed`, {
-      status: response.status >= 500 ? 502 : 400,
-      code: payload?.code || 'YOOKASSA_ERROR',
-      details: payload,
-    });
-  }
-  return payload;
 }
 
 /* ------------------------------------------------------------------ mock -- */

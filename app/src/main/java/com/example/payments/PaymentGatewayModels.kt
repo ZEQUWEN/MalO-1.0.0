@@ -60,6 +60,18 @@ data class CatalogResponse(
     val crypto: CryptoOptionsDto? = null
 )
 
+@JsonClass(generateAdapter = true)
+data class PaymentMethodAvailabilityDto(
+    val id: String,
+    val provider: String
+)
+
+@JsonClass(generateAdapter = true)
+data class PaymentMethodsResponse(
+    val ok: Boolean = false,
+    val methods: List<PaymentMethodAvailabilityDto> = emptyList()
+)
+
 /* -------------------------------------------------------- subscription -- */
 
 @JsonClass(generateAdapter = true)

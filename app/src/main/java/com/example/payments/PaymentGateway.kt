@@ -26,6 +26,9 @@ interface PaymentGatewayApi {
     @GET("api/catalog")
     suspend fun catalog(): Response<CatalogResponse>
 
+    @GET("api/payment/methods")
+    suspend fun paymentMethods(): Response<PaymentMethodsResponse>
+
     @GET("api/subscription")
     suspend fun subscription(@Query("userId") userId: String): Response<SubscriptionResponse>
 
@@ -199,6 +202,8 @@ object PaymentGateway {
     }
 
     suspend fun catalog(): GatewayResult<CatalogResponse> = call { it.catalog() }
+
+    suspend fun paymentMethods(): GatewayResult<PaymentMethodsResponse> = call { it.paymentMethods() }
 
     suspend fun subscription(context: Context): GatewayResult<SubscriptionResponse> =
         call { it.subscription(userId(context)) }

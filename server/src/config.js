@@ -57,6 +57,9 @@ export const config = {
     secretKey: process.env.YOOKASSA_SECRET_KEY || '',
     apiBase: withoutTrailingSlash(process.env.YOOKASSA_API_BASE || 'https://api.yookassa.ru/v3'),
     returnUrl: process.env.YOOKASSA_RETURN_URL || 'malo://payment/return',
+    bankCardEnabled: bool(process.env.YOOKASSA_BANK_CARD_ENABLED, true),
+    sbpEnabled: bool(process.env.YOOKASSA_SBP_ENABLED, true),
+    requestTimeoutMs: boundedInt(process.env.YOOKASSA_REQUEST_TIMEOUT_MS, 5_000, 1_000, 5_000),
     /** YooKassa notification source networks (documented by the provider). */
     allowedNetworks: (
       process.env.YOOKASSA_ALLOWED_NETWORKS ||
@@ -79,7 +82,7 @@ export const config = {
     invoiceExpiresIn: boundedInt(process.env.CRYPTOBOT_INVOICE_EXPIRES_IN, 3600, 1, 2_678_400),
     // Avoid keeping a Crypto Pay webhook open indefinitely. A 5xx response is
     // intentional here: Crypto Pay retries a delivery that was not verified.
-    requestTimeoutMs: boundedInt(process.env.CRYPTOBOT_REQUEST_TIMEOUT_MS, 10_000, 1_000, 30_000),
+    requestTimeoutMs: boundedInt(process.env.CRYPTOBOT_REQUEST_TIMEOUT_MS, 5_000, 1_000, 5_000),
   },
 
   /** Never hit a real provider in tests / local demos. Never enable on Railway. */
@@ -88,6 +91,13 @@ export const config = {
 
 export const isYooKassaConfigured = () =>
   Boolean(config.yookassa.shopId && config.yookassa.secretKey) || config.mockProviders;
+
+export const isYooKassaMethodAvailable = (method) => {
+  if (!isYooKassaConfigured()) return false;
+  if (method === 'bank_card') return config.yookassa.bankCardEnabled;
+  if (method === 'sbp') return config.yookassa.sbpEnabled;
+  return false;
+};
 
 // A Crypto Pay webhook must always be HMAC-authenticated, including in mock
 // mode. Therefore mock mode still needs a non-empty test token.

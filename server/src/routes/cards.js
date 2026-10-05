@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
-import { config } from '../config.js';
+import { config, isYooKassaMethodAvailable } from '../config.js';
 import { db, newId } from '../store.js';
 import { yookassa, normalizeBrand } from '../providers/yookassa.js';
 import { asyncRoute, requireClientKey, requireUserId } from '../middleware.js';
@@ -88,6 +88,15 @@ async function startCheckout(req, res) {
     return res.status(400).json({
       ok: false,
       error: { code: 'UNSUPPORTED_PAYMENT_METHOD', message: 'Use bank_card or sbp' },
+    });
+  }
+  if (!isYooKassaMethodAvailable(requestedMethod)) {
+    return res.status(503).json({
+      ok: false,
+      error: {
+        code: 'PAYMENT_METHOD_UNAVAILABLE',
+        message: `YooKassa ${requestedMethod} checkout is not configured`,
+      },
     });
   }
 

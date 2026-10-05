@@ -14,6 +14,7 @@ const { signCryptoBotPayload, verifyCryptoBotSignature, __mockMarkPaid } = await
 const { isTrustedYooKassaIp } = await import('../src/providers/yookassa.js');
 const { isNetworkAllowed, buildCatalog } = await import('../src/networks.js');
 const { validateCreatedCryptoInvoice } = await import('../src/routes/crypto.js');
+const { config } = await import('../src/config.js');
 
 initStore();
 
@@ -58,6 +59,53 @@ test('catalog exposes crypto networks for every asset', async () => {
   assert.deepEqual(body.card.brands.slice(0, 3), ['VISA', 'MASTERCARD', 'MIR']);
   assert.deepEqual(body.card.paymentMethods, ['bank_card', 'sbp']);
   assert.equal(body.card.supportsSbp, true);
+
+  const methods = await (await api('/api/payment/methods')).json();
+  assert.deepEqual(methods.methods, [
+    { id: 'bank_card', provider: 'yookassa' },
+    { id: 'sbp', provider: 'yookassa' },
+    { id: 'cryptobot', provider: 'cryptobot' },
+  ]);
+});
+
+test('payment methods and checkout fail fast when their providers are unavailable', async () => {
+  const saved = {
+    bankCardEnabled: config.yookassa.bankCardEnabled,
+    sbpEnabled: config.yookassa.sbpEnabled,
+    cryptoToken: config.cryptobot.token,
+  };
+  config.yookassa.bankCardEnabled = false;
+  config.yookassa.sbpEnabled = false;
+  config.cryptobot.token = '';
+
+  try {
+    const methods = await api('/api/payment/methods');
+    assert.deepEqual((await methods.json()).methods, []);
+
+    const catalog = await (await api('/api/catalog')).json();
+    assert.equal(catalog.card.enabled, false);
+    assert.deepEqual(catalog.card.paymentMethods, []);
+    assert.equal(catalog.crypto.enabled, false);
+    assert.deepEqual(catalog.crypto.assets, []);
+
+    const cardCheckout = await api('/api/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ userId: USER, paymentMethod: 'sbp' }),
+    });
+    assert.equal(cardCheckout.status, 503);
+    assert.equal((await cardCheckout.json()).error.code, 'PAYMENT_METHOD_UNAVAILABLE');
+
+    const cryptoCheckout = await api('/api/crypto/invoices', {
+      method: 'POST',
+      body: JSON.stringify({ userId: USER, asset: 'USDT', network: 'TRON' }),
+    });
+    assert.equal(cryptoCheckout.status, 503);
+    assert.equal((await cryptoCheckout.json()).error.code, 'CRYPTOBOT_NOT_CONFIGURED');
+  } finally {
+    config.yookassa.bankCardEnabled = saved.bankCardEnabled;
+    config.yookassa.sbpEnabled = saved.sbpEnabled;
+    config.cryptobot.token = saved.cryptoToken;
+  }
 });
 
 test('network validation rejects impossible asset/network pairs', () => {

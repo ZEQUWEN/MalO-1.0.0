@@ -124,6 +124,10 @@ fun CardHolderScreen(
     var refreshing by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<SavedCard?>(null) }
     var showCancelDialog by remember { mutableStateOf(false) }
+    var enabledPaymentMethods by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var paymentMethodsLoaded by remember { mutableStateOf(false) }
+    var paymentMethodsError by remember { mutableStateOf<String?>(null) }
+    var paymentMethodsRetry by remember { mutableIntStateOf(0) }
 
     BackHandler { onDismiss() }
 
@@ -157,10 +161,10 @@ fun CardHolderScreen(
 
     /** Opens a hosted checkout without ever collecting card details in-app. */
     fun openYooKassaCheckout(paymentMethod: String, saveCard: Boolean) {
-        if (!PaymentGateway.isConfigured) {
+        if (!PaymentGateway.isConfigured || paymentMethod !in enabledPaymentMethods) {
             Toast.makeText(
                 context,
-                "Оплата недоступна: укажите MALO_GATEWAY_URL для ЮKassa.",
+                "Этот способ оплаты сейчас недоступен.",
                 Toast.LENGTH_LONG
             ).show()
             return
@@ -199,6 +203,24 @@ fun CardHolderScreen(
     }
 
     LaunchedEffect(Unit) { refreshFromGateway() }
+    LaunchedEffect(paymentMethodsRetry) {
+        paymentMethodsLoaded = false
+        when (val result = PaymentGateway.paymentMethods()) {
+            is GatewayResult.Success -> {
+                enabledPaymentMethods = result.data.methods.map { it.id }.toSet()
+                paymentMethodsError = null
+            }
+            is GatewayResult.Error -> {
+                enabledPaymentMethods = emptySet()
+                paymentMethodsError = result.message
+            }
+            GatewayResult.NotConfigured -> {
+                enabledPaymentMethods = emptySet()
+                paymentMethodsError = "Шлюз платежей не настроен для этой сборки."
+            }
+        }
+        paymentMethodsLoaded = true
+    }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refreshFromGateway()
@@ -275,6 +297,10 @@ fun CardHolderScreen(
                 cancelAtPeriodEnd = cancelAtPeriodEnd,
                 hasCard = cards.isNotEmpty(),
                 onToggleAutoPay = { enabled ->
+                    if (enabled && "bank_card" !in enabledPaymentMethods) {
+                        Toast.makeText(context, "Автопродление картой сейчас недоступно.", Toast.LENGTH_LONG).show()
+                        return@SubscriptionStatusCard
+                    }
                     autoPay = enabled
                     cancelAtPeriodEnd = !enabled
                     CardVault.setAutoPayEnabled(context, enabled)
@@ -366,50 +392,68 @@ fun CardHolderScreen(
                 }
             }
 
-            Button(
-                onClick = { openYooKassaCheckout(paymentMethod = "bank_card", saveCard = true) },
-                enabled = !busy,
-                colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .testTag("add_card_yookassa")
-            ) {
-                if (busy) {
-                    CircularProgressIndicator(color = Color.Black, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                } else {
-                    Icon(Icons.Default.AddCard, contentDescription = null, tint = Color.Black, modifier = Modifier.size(19.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+            if ("bank_card" in enabledPaymentMethods) {
+                Button(
+                    onClick = { openYooKassaCheckout(paymentMethod = "bank_card", saveCard = true) },
+                    enabled = !busy && paymentMethodsLoaded,
+                    colors = ButtonDefaults.buttonColors(containerColor = scpNeonPurple),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("add_card_yookassa")
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(color = Color.Black, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                    } else {
+                        Icon(Icons.Default.AddCard, contentDescription = null, tint = Color.Black, modifier = Modifier.size(19.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Добавить карту через ЮKassa",
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            } else if (paymentMethodsLoaded) {
+                Column {
                     Text(
-                        text = "Добавить карту через ЮKassa",
-                        color = Color.Black,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp
+                        text = paymentMethodsError ?: "Добавление карт ЮKassa сейчас недоступно.",
+                        color = Color.Gray,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
                     )
+                    if (paymentMethodsError != null) {
+                        TextButton(onClick = { paymentMethodsRetry++ }) {
+                            Text("Повторить загрузку способов оплаты")
+                        }
+                    }
                 }
             }
 
             SecureCheckoutNotice()
 
-            OutlinedButton(
-                onClick = { openYooKassaCheckout(paymentMethod = "sbp", saveCard = false) },
-                enabled = !busy,
-                border = BorderStroke(1.dp, scpTerminalGreen.copy(alpha = 0.8f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = scpTerminalGreen),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("renew_with_sbp")
-            ) {
-                Text(
-                    text = "Продлить подписку через СБП",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            if ("sbp" in enabledPaymentMethods) {
+                OutlinedButton(
+                    onClick = { openYooKassaCheckout(paymentMethod = "sbp", saveCard = false) },
+                    enabled = !busy && paymentMethodsLoaded,
+                    border = BorderStroke(1.dp, scpTerminalGreen.copy(alpha = 0.8f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = scpTerminalGreen),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("renew_with_sbp")
+                ) {
+                    Text(
+                        text = "Продлить подписку через СБП",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
             Text(
                 text = "СБП — разовая оплата в приложении банка. Для автоматического продления выберите сохранённую карту.",

@@ -9,8 +9,12 @@ the tracked `Dockerfile`; do not add a separate Railpack/Nixpacks build command.
 | Download page | `https://malo.up.railway.app/` |
 | Health check | `https://malo.up.railway.app/api/health` |
 | Checkout catalogue | `https://malo.up.railway.app/api/catalog` |
+| Available payment methods | `https://malo.up.railway.app/api/payment/methods` |
 | YooKassa webhook | `https://malo.up.railway.app/api/webhooks/yookassa` |
 | CryptoBot webhook | `https://malo.up.railway.app/api/webhooks/cryptobot` |
+
+The app-facing `/api/payment/methods` endpoint requires the
+`X-MalO-Client-Key` header and reports the currently configured methods.
 
 ## 1. Railway service settings
 
@@ -62,12 +66,16 @@ YOOKASSA_SECRET_KEY=<secret-key>
 YOOKASSA_API_BASE=https://api.yookassa.ru/v3
 YOOKASSA_RETURN_URL=malo://payment/return
 YOOKASSA_VERIFY_NETWORK=1
+# Enable only methods activated for this YooKassa shop.
+YOOKASSA_BANK_CARD_ENABLED=1
+YOOKASSA_SBP_ENABLED=1
+YOOKASSA_REQUEST_TIMEOUT_MS=5000
 
 # Keep this ONLY in Railway Variables — never in the APK, Git, or a client app.
 CRYPTOBOT_TOKEN=<fresh-crypto-pay-api-token>
 CRYPTOBOT_API_BASE=https://pay.crypt.bot/api
 CRYPTOBOT_INVOICE_EXPIRES_IN=3600
-CRYPTOBOT_REQUEST_TIMEOUT_MS=10000
+CRYPTOBOT_REQUEST_TIMEOUT_MS=5000
 
 MALO_PLAN_PERIOD_DAYS=30
 MALO_PRICE_RUB=499.00
@@ -111,7 +119,19 @@ payment.canceled
 refund.succeeded
 ```
 
-Enable both **Банковские карты** and **СБП** in the YooKassa shop. The gateway
+Set the `YOOKASSA_BANK_CARD_ENABLED` and `YOOKASSA_SBP_ENABLED` variables to `1`
+only for methods activated in the YooKassa shop; set an unavailable method to
+`0`. The app fetches `/api/payment/methods` and does not show disabled checkout
+buttons. The gateway independently rejects disabled methods with HTTP 503
+before making any provider request.
+
+Provider API calls time out after at most five seconds. Three consecutive
+upstream/network failures open an in-memory circuit for 30 seconds; no payment
+request is automatically retried. Circuit state resets on restart and is not
+shared across replicas, so keep one replica unless the gateway moves to shared
+state.
+
+The gateway
 creates either:
 
 * `bank_card` checkout with `save_payment_method: true` when the user chooses
