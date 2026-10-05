@@ -150,6 +150,9 @@ fun SubscriptionScreen(
     var transactionStatus by remember { mutableStateOf(TransactionStatus.IDLE) }
     var processingStageText by remember { mutableStateOf("Подключение к шлюзу...") }
     var transactionErrorMessage by remember { mutableStateOf("Транзакция отклонена банком-эмитентом") }
+    // Gateway error code behind the dialog, so the hints can tell a transport
+    // failure (the request never reached the gateway) from a real decline.
+    var transactionErrorCode by remember { mutableStateOf("") }
     var transactionId by remember { mutableStateOf("TX-1471-0000") }
     var receiptMethodLabel by remember { mutableStateOf("Банковская карта") }
     var receiptAmountLabel by remember { mutableStateOf("499 ₽") }
@@ -172,6 +175,7 @@ fun SubscriptionScreen(
     fun payWithYooKassa() {
         val isCard = selectedPaymentMethod == PaymentMethod.CARD
         transactionStatus = TransactionStatus.PROCESSING
+        transactionErrorCode = ""
         receiptMethodLabel = if (isCard) "Банковская карта ЮKassa" else "СБП через ЮKassa"
         receiptAmountLabel = "499 ₽"
 
@@ -240,6 +244,7 @@ fun SubscriptionScreen(
                 }
                 is GatewayResult.Error -> {
                     transactionErrorMessage = result.message
+                    transactionErrorCode = result.code
                     transactionStatus = TransactionStatus.FAILURE
                 }
                 GatewayResult.NotConfigured -> {
@@ -254,6 +259,7 @@ fun SubscriptionScreen(
 
     fun createCryptoBotInvoice() {
         transactionStatus = TransactionStatus.PROCESSING
+        transactionErrorCode = ""
         processingStageText = "Создание счёта в Telegram CryptoBot..."
         receiptMethodLabel = "CryptoBot • ${selectedCryptoAsset.symbol}"
 
@@ -295,6 +301,7 @@ fun SubscriptionScreen(
                 }
                 is GatewayResult.Error -> {
                     transactionErrorMessage = result.message
+                    transactionErrorCode = result.code
                     transactionStatus = TransactionStatus.FAILURE
                 }
                 GatewayResult.NotConfigured -> {
@@ -962,10 +969,23 @@ fun SubscriptionScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = when (selectedPaymentMethod) {
-                                    PaymentMethod.CARD -> "• Недостаточно средств на счёте\n• Карта заблокирована для онлайн-оплат\n• Подтверждение 3-D Secure не завершено"
-                                    PaymentMethod.SBP -> "• Операция не подтверждена в приложении банка\n• Истёк срок счёта СБП\n• СБП временно недоступна у банка"
-                                    PaymentMethod.CRYPTO -> "• Счёт CryptoBot истёк или не оплачен\n• Выбранный актив недоступен\n• Подтверждение от CryptoBot ещё не получено"
+                                // A transport failure never reached the gateway, so the
+                                // provider was never asked: showing «счёт истёк» there
+                                // sends the user to re-pay a payment that never started.
+                                text = when (transactionErrorCode) {
+                                    "GATEWAY_DNS_FAILED" ->
+                                        "• Адрес платёжного шлюза не определяется\n• Сеть подменяет или блокирует DNS-ответ\n• Запрос до шлюза не дошёл — платёж не создавался"
+                                    "GATEWAY_TIMEOUT", "GATEWAY_UNREACHABLE" ->
+                                        "• Шлюз не отвечает: соединение не устанавливается\n• Сервис остановлен либо недоступен из этой сети\n• Запрос до шлюза не дошёл — платёж не создавался"
+                                    "GATEWAY_TLS_BLOCKED" ->
+                                        "• TLS-соединение со шлюзом разорвано\n• Обычно это фильтрация трафика в сети/у провайдера\n• Запрос до шлюза не дошёл — платёж не создавался"
+                                    "NETWORK_ERROR" ->
+                                        "• Нет связи с платёжным шлюзом\n• Проверьте интернет и попробуйте другую сеть\n• Запрос до шлюза не дошёл — платёж не создавался"
+                                    else -> when (selectedPaymentMethod) {
+                                        PaymentMethod.CARD -> "• Недостаточно средств на счёте\n• Карта заблокирована для онлайн-оплат\n• Подтверждение 3-D Secure не завершено"
+                                        PaymentMethod.SBP -> "• Операция не подтверждена в приложении банка\n• Истёк срок счёта СБП\n• СБП временно недоступна у банка"
+                                        PaymentMethod.CRYPTO -> "• Счёт CryptoBot истёк или не оплачен\n• Выбранный актив недоступен\n• Подтверждение от CryptoBot ещё не получено"
+                                    }
                                 },
                                 color = Color.LightGray,
                                 fontSize = 11.sp,

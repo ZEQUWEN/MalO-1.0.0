@@ -159,9 +159,43 @@ object PaymentGateway {
                     )
                 }
             } catch (e: Exception) {
-                GatewayResult.Error("NETWORK_ERROR", e.message ?: "Нет связи с платёжным шлюзом")
+                classifyNetworkError(e)
             }
         }
+    }
+
+    /**
+     * «Failed to connect to malo.up.railway.app» is never a provider decline:
+     * the request never reached the gateway, so CryptoBot was never called.
+     * Distinguish the three причины so the user is not told to retry a payment
+     * when the real problem is DNS, a dead deployment, or a blocked TLS path.
+     */
+    internal fun classifyNetworkError(e: Throwable): GatewayResult.Error = when (e) {
+        is java.net.UnknownHostException -> GatewayResult.Error(
+            "GATEWAY_DNS_FAILED",
+            "Не удалось определить адрес платёжного шлюза. Проверь интернет/DNS: " +
+                "домен шлюза не резолвится у этого провайдера."
+        )
+        is java.net.SocketTimeoutException -> GatewayResult.Error(
+            "GATEWAY_TIMEOUT",
+            "Платёжный шлюз не ответил вовремя. Попробуй ещё раз через минуту."
+        )
+        is javax.net.ssl.SSLException -> GatewayResult.Error(
+            "GATEWAY_TLS_BLOCKED",
+            "TLS-соединение с платёжным шлюзом было разорвано. Обычно так выглядит " +
+                "фильтрация трафика на стороне сети или провайдера."
+        )
+        is java.net.ConnectException, is java.net.NoRouteToHostException, is java.net.PortUnreachableException ->
+            GatewayResult.Error(
+                "GATEWAY_UNREACHABLE",
+                "Платёжный шлюз недоступен: соединение не устанавливается. Сервис может быть " +
+                    "остановлен, либо доступ к нему ограничен в текущей сети."
+            )
+        is java.io.IOException -> GatewayResult.Error(
+            "GATEWAY_UNREACHABLE",
+            e.message ?: "Нет связи с платёжным шлюзом"
+        )
+        else -> GatewayResult.Error("NETWORK_ERROR", e.message ?: "Нет связи с платёжным шлюзом")
     }
 
     suspend fun catalog(): GatewayResult<CatalogResponse> = call { it.catalog() }
