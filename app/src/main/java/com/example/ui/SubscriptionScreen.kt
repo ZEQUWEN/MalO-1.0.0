@@ -770,6 +770,21 @@ fun SubscriptionScreen(
                         }
                     }
                 }
+                Text(
+                    text = when (selectedPaymentMethod) {
+                        PaymentMethod.CRYPTO ->
+                            "Подписка действует 30 дней. Продлевается вручную через приложение."
+                        PaymentMethod.CARD ->
+                            "Подписка продлевается автоматически. Отменить можно в любое время."
+                        PaymentMethod.SBP ->
+                            "Подписка действует 30 дней. Продлевается вручную через приложение."
+                    },
+                    color = Color.Gray,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
             } else {
                 Button(
                     onClick = onDismiss,
