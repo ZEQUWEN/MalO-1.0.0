@@ -19,8 +19,13 @@ chmod +x build.sh start.sh
 ./build.sh
 ```
 
-`build.sh` downloads the pinned Gradle 9.3.1 distribution on its first run,
-checks its SHA-256 checksum, and creates a debug APK. The resulting files are:
+`build.sh` checks Android SDK package availability with
+`sdkmanager --list --newer` before compiling. It reports new or updatable
+packages but does not install them, so the SDK platform and Build Tools
+selected for the build remain unchanged.
+Set `MALO_ANDROID_SDK_UPDATE_CHECK=0` to skip the online check. The script also
+downloads the pinned Gradle 9.3.1 distribution on its first run, checks its
+SHA-256 checksum, and creates a debug APK. The resulting files are:
 
 - `public/MalO-1.0.0.apk` — primary download;
 - `public/app-debug.apk` — compatibility mirror for the download page.
