@@ -92,6 +92,7 @@ variable fails closed with `CLIENT_AUTH_NOT_CONFIGURED`.
 | `GET` | `/api/health` | liveness and provider configuration |
 | `GET` | `/api/catalog` | plan, accepted brands, `bank_card` and `sbp` methods |
 | `POST` | `/api/malo/chat` | Pro chat proxy with server-side input, history and output limits |
+| `POST` | `/api/malo/burn` | acknowledge a local chat-history wipe request |
 | `POST` | `/api/checkout` | start a YooKassa checkout (`paymentMethod: bank_card\|sbp`) |
 | `POST` | `/api/crypto/invoices` | create a fixed-price CryptoBot invoice (`asset`; `network` is a legacy hint) |
 | `GET` | `/api/crypto/invoices/:id?userId=…` | read/poll only the caller's CryptoBot invoice |
@@ -133,6 +134,12 @@ subscription, then applies limits before forwarding to DeepSeek:
 * `DEEPSEEK_API_KEY` is required as a **server runtime variable**. It must not
   be placed in the Android `.env`, APK, or build arguments.
 * `DEEPSEEK_REQUEST_TIMEOUT_MS` bounds the provider request (default 30 seconds).
+
+Chat messages and history are held in the Android Room database, not persisted
+by this gateway. The app's Burn History action deletes the local message rows
+and its local short-term AI memory, then calls `POST /api/malo/burn` for an
+acknowledgement; the route reports `serverHistoryStored: false`. It does not
+delete subscription, payment, or card records.
 
 The client key alone is not account authentication. The route also requires
 the user ID to have an active subscription in the gateway store; for production

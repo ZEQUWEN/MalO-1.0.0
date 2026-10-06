@@ -2,6 +2,8 @@ package com.example.payments
 
 import android.content.Context
 import com.example.api.DeepSeekMessage
+import com.example.api.MaloBurnRequest
+import com.example.api.MaloBurnResponse
 import com.example.api.MaloChatRequest
 import com.example.api.MaloChatResponse
 import com.example.BuildConfig
@@ -34,6 +36,9 @@ interface PaymentGatewayApi {
 
     @POST("api/malo/chat")
     suspend fun maloChat(@Body body: MaloChatRequest): Response<MaloChatResponse>
+
+    @POST("api/malo/burn")
+    suspend fun burnHistory(@Body body: MaloBurnRequest): Response<MaloBurnResponse>
 
     @GET("api/subscription")
     suspend fun subscription(@Query("userId") userId: String): Response<SubscriptionResponse>
@@ -213,6 +218,9 @@ object PaymentGateway {
 
     suspend fun maloChat(context: Context, messages: List<DeepSeekMessage>): GatewayResult<MaloChatResponse> =
         call { it.maloChat(MaloChatRequest(userId(context), messages)) }
+
+    suspend fun burnHistory(context: Context): GatewayResult<MaloBurnResponse> =
+        call { it.burnHistory(MaloBurnRequest(userId(context))) }
 
     suspend fun subscription(context: Context): GatewayResult<SubscriptionResponse> =
         call { it.subscription(userId(context)) }

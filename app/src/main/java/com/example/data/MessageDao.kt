@@ -11,6 +11,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages ORDER BY timestamp ASC")
     fun getAllMessagesFlow(): Flow<List<Message>>
 
+    @Query("SELECT * FROM messages")
+    suspend fun getAllMessagesForBurn(): List<Message>
+
     @Query("SELECT * FROM messages ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentMessages(limit: Int): List<Message>
 

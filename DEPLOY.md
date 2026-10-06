@@ -100,6 +100,11 @@ budget. These server limits can be lowered or raised within bounded ranges
 using the variables above; changing `DEEPSEEK_API_KEY`
 only requires a runtime redeploy/restart, not an APK rebuild.
 
+Chat history is stored in the Android Room database, not on the gateway.
+`POST /api/malo/burn` acknowledges the app's wipe request; the Android client
+performs the actual message-row and local AI-memory deletion. Payment and
+subscription records are not affected.
+
 ### Android gateway build values
 
 The hosted APK must contain the same `MALO_GATEWAY_URL` and `MALO_CLIENT_KEY`

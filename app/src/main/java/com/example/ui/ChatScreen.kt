@@ -954,15 +954,21 @@ fun ChatScreen(viewModel: ChatViewModel) {
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
-                                    text = "Удаляет все сообщения, настройки и цифровые следы присутствия. Имитация полного стирания памяти.",
+                                    text = "Удаляет сообщения, вложения и краткосрочную память с этого устройства. Платёжные данные и настройки не затрагиваются.",
                                     color = Color.Gray,
                                     fontSize = 12.sp,
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Button(
                                     onClick = {
-                                        viewModel.burnHistory()
-                                        Toast.makeText(context, "Все цифровые следы сожжены 🔥", Toast.LENGTH_SHORT).show()
+                                        viewModel.burnHistory { erased ->
+                                            Toast.makeText(
+                                                context,
+                                                if (erased) "История сообщений удалена с устройства."
+                                                else "Не удалось удалить историю сообщений.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
                                     shape = RoundedCornerShape(8.dp),

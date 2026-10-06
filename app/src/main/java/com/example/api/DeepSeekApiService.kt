@@ -20,3 +20,14 @@ data class MaloChatResponse(
     @Json(name = "ok") val ok: Boolean = false,
     @Json(name = "reply") val reply: String
 )
+
+@JsonClass(generateAdapter = true)
+data class MaloBurnRequest(
+    @Json(name = "userId") val userId: String
+)
+
+@JsonClass(generateAdapter = true)
+data class MaloBurnResponse(
+    @Json(name = "ok") val ok: Boolean = false,
+    @Json(name = "serverHistoryStored") val serverHistoryStored: Boolean = false
+)

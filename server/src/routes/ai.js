@@ -6,6 +6,14 @@ import { getSubscription } from '../subscriptions.js';
 export const aiRouter = Router();
 
 aiRouter.post(
+  '/malo/burn',
+  requireClientKey,
+  requireUserId,
+  // Chat content is never persisted by the gateway; the Android app erases its Room database.
+  (_req, res) => res.json({ ok: true, serverHistoryStored: false }),
+);
+
+aiRouter.post(
   '/malo/chat',
   requireClientKey,
   requireUserId,

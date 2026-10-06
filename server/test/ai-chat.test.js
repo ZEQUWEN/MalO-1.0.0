@@ -43,6 +43,7 @@ test.after(async () => {
   globalThis.fetch = realFetch;
   server?.close();
   server?.closeAllConnections?.();
+  db.flushNow();
   fs.rmSync(process.env.MALO_DATA_DIR, { recursive: true, force: true });
 });
 
@@ -55,6 +56,22 @@ const request = (body) =>
     },
     body: JSON.stringify(body),
   });
+
+const requestBurn = (body) =>
+  fetch(`${baseUrl}/api/malo/burn`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-MalO-Client-Key': process.env.MALO_CLIENT_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+
+test('burn endpoint acknowledges that chat history is not retained by the gateway', async () => {
+  const response = await requestBurn({ userId: 'malo-burn-test-user' });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, serverHistoryStored: false });
+});
 
 test('chat proxy restricts history and output and requires an active Pro subscription', async () => {
   const userId = 'malo-ai-test-user';

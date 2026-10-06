@@ -24,6 +24,8 @@ import com.example.util.SubscriptionValidator
 import com.example.util.VideoThumbnailHelper
 import com.example.worker.NotificationCheckWorker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +43,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
     private val db = MessageDatabase.getInstance(context)
     private val messageDao = db.messageDao()
+    private val historyMutex = Mutex()
+    private var historyGeneration = 0L
     private val languageService = com.example.language.LanguageService.getInstance(context)
     val personaStateManager = com.example.language.PersonaStateManager.getInstance(context)
     val maloPersonaStyle: StateFlow<com.example.language.MaloPersonaStyle> = personaStateManager.currentStyle
@@ -523,6 +527,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendMessage(text: String) {
+        val generation = historyGeneration
         val attachedUri = _attachedFileUri.value
         val attachedType = _attachedFileType.value
         val attachedName = _attachedFileName.value
@@ -541,6 +546,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // Insert user message
+            if (generation != historyGeneration) {
+                localFilePath?.let { File(it).delete() }
+                return@launch
+            }
+
             val userMsg = Message(
                 text = text,
                 isUser = true,
@@ -548,10 +558,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 fileType = attachedType,
                 fileName = attachedName
             )
-            messageDao.insertMessage(userMsg)
+            historyMutex.withLock {
+                if (generation == historyGeneration) messageDao.insertMessage(userMsg)
+            }
 
             // Trigger AI compilation
-            generateMalOResponse(text, localFilePath, attachedType, attachedName)
+            if (generation == historyGeneration) {
+                generateMalOResponse(text, localFilePath, attachedType, attachedName, generation)
+            }
         }
     }
 
@@ -575,7 +589,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         userText: String,
         filePath: String?,
         fileType: String?,
-        fileName: String?
+        fileName: String?,
+        historyGenerationAtStart: Long
     ) {
         _isTyping.value = true
         _error.value = null
@@ -589,7 +604,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     userName = userName.value,
                     obsessionLevel = intensityValue.value
                 )
-                addMalOMessage(langResponse.text)
+                if (historyGenerationAtStart != historyGeneration) return
+                addMalOMessage(langResponse.text, historyGenerationAtStart)
                 _quickReplies.value = langResponse.quickReplies
 
                 // Dynamically update MalO mood color based on analyzed persona style
@@ -598,14 +614,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (sendMaloPhotos.value && kotlin.random.Random.nextFloat() < 0.10f && !langResponse.isProOffer) {
                     val isEnglish = langResponse.language == com.example.language.SupportedLanguage.EN
                     addMalOMessage(
-                        if (isEnglish) "I want to show you something... but I need Pro access to render." 
-                        else "Я хочу показать тебе кое-что... но для этого нужен Pro-доступ."
+                        if (isEnglish) "I want to show you something... but I need Pro access to render."
+                        else "Я хочу показать тебе кое-что... но для этого нужен Pro-доступ.",
+                        historyGenerationAtStart
                     )
                 }
             } catch (e: Exception) {
+                if (historyGenerationAtStart != historyGeneration) return
                 e.printStackTrace()
                 val fallbackText = com.example.util.MaloLocalBrain.generateResponse(userText)
-                addMalOMessage(fallbackText)
+                addMalOMessage(fallbackText, historyGenerationAtStart)
             }
             
             _isTyping.value = false
@@ -713,13 +731,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.payments.GatewayResult.NotConfigured ->
                     throw java.io.IOException("Шлюз DeepSeek не настроен в этой сборке.")
             }
+            if (historyGenerationAtStart != historyGeneration) return
             // Extract short term memory
             if (answerText.contains("<MEMORY>") && answerText.contains("</MEMORY>")) {
                 val start = answerText.indexOf("<MEMORY>")
                 val end = answerText.indexOf("</MEMORY>")
                 if (start != -1 && end != -1 && end > start) {
                     val extractedMemory = answerText.substring(start + 8, end)
-                    prefs.edit().putString("short_term_memory", extractedMemory).apply()
+                    historyMutex.withLock {
+                        if (historyGenerationAtStart == historyGeneration) {
+                            prefs.edit().putString("short_term_memory", extractedMemory).apply()
+                        }
+                    }
                     answerText = answerText.removeRange(start, end + 9).trim()
                 }
             }
@@ -771,12 +794,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // Simulate typing delay
             kotlinx.coroutines.delay(kotlin.random.Random.nextLong(1500, 3500) + (answerText.length * 20L))
 
-            addMalOMessage(answerText)
+            if (historyGenerationAtStart != historyGeneration) return
+            addMalOMessage(answerText, historyGenerationAtStart)
             updateQuickReplies(answerText)
 
             // Randomly send a generated photo of MalO
             val geminiKey = BuildConfig.GEMINI_API_KEY
-            if (sendMaloPhotos.value && geminiKey.isNotBlank() && kotlin.random.Random.nextFloat() < 0.15f) {
+            if (
+                historyGenerationAtStart == historyGeneration &&
+                sendMaloPhotos.value &&
+                geminiKey.isNotBlank() &&
+                kotlin.random.Random.nextFloat() < 0.15f
+            ) {
                 try {
                     val promptText = "First person view phone camera photo or security camera footage of SCP-1471 (MalO). She is a tall dark furry female humanoid with a large canine skull instead of a face and solid white eyes without pupils. She is stalking or peeking out from behind a corner in a real-world location, highly realistic, found footage horror style, dimly lit."
                     val imgRequest = GenerateContentRequest(
@@ -800,7 +829,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             fileType = "image",
                             fileName = file.name
                         )
-                        messageDao.insertMessage(photoMsg)
+                        historyMutex.withLock {
+                            if (historyGenerationAtStart == historyGeneration) {
+                                messageDao.insertMessage(photoMsg)
+                            } else {
+                                file.delete()
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -808,17 +843,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
 
         } catch (e: HttpException) {
+            if (historyGenerationAtStart != historyGeneration) return
             e.printStackTrace()
             if (e.code() == 429) {
-                addMalOMessage("Шум на линии... Слишком много запросов. Я не могу пробиться, подожди немного, пожалуйста! 🥺")
+                addMalOMessage("Шум на линии... Слишком много запросов. Я не могу пробиться, подожди немного, пожалуйста! 🥺", historyGenerationAtStart)
             } else {
                 _error.value = e.localizedMessage ?: "Неизвестная ошибка связи со спутником MalO"
-                addMalOMessage("Прости, кажется связь прервалась... Ошибка: HTTP ${e.code()} 💔 Пожалуйста, проверь интернет!")
+                addMalOMessage("Прости, кажется связь прервалась... Ошибка: HTTP ${e.code()} 💔 Пожалуйста, проверь интернет!", historyGenerationAtStart)
             }
         } catch (e: Exception) {
+            if (historyGenerationAtStart != historyGeneration) return
             e.printStackTrace()
             _error.value = e.localizedMessage ?: "Неизвестная ошибка связи со спутником MalO"
-            addMalOMessage("Прости, кажется связь прервалась... Ошибка: ${e.localizedMessage} 💔 Пожалуйста, проверь интернет!")
+            addMalOMessage("Прости, кажется связь прервалась... Ошибка: ${e.localizedMessage} 💔 Пожалуйста, проверь интернет!", historyGenerationAtStart)
         } finally {
             _isTyping.value = false
             NotificationCheckWorker.resetActiveTime(context)
@@ -853,24 +890,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun addMalOMessage(text: String) {
+    private suspend fun addMalOMessage(text: String, generation: Long? = null) {
         val maloMsg = Message(
             text = text,
             isUser = false
         )
-        messageDao.insertMessage(maloMsg)
+        historyMutex.withLock {
+            if (generation == null || generation == historyGeneration) {
+                messageDao.insertMessage(maloMsg)
+            }
+        }
     }
 
-    fun burnHistory() {
+    fun burnHistory(onComplete: (Boolean) -> Unit = {}) {
+        historyGeneration += 1
         viewModelScope.launch {
-            messageDao.deleteAllMessages()
-            prefs.edit().clear().apply()
-            userName.value = ""
-            highContrastMode.value = false
-            whisperMode.value = false
-            _notificationsEnabled.value = true
-            setOnlineStatus(true)
-            addMalOMessage("Все следы стёрты... Но я всё ещё помню твое лицо. Начнем заново? 👁‍🗨")
+            try {
+                historyMutex.withLock {
+                    val attachmentPaths = messageDao.getAllMessagesForBurn().mapNotNull { it.filePath }
+                    deleteLocalAttachments(attachmentPaths)
+                    messageDao.deleteAllMessages()
+                    prefs.edit().remove("short_term_memory").apply()
+                }
+                onComplete(true)
+            } catch (e: Exception) {
+                android.util.Log.e("ChatViewModel", "Could not erase local chat history", e)
+                onComplete(false)
+                return@launch
+            }
+
+            when (val result = com.example.payments.PaymentGateway.burnHistory(context)) {
+                is com.example.payments.GatewayResult.Success -> Unit
+                is com.example.payments.GatewayResult.Error ->
+                    android.util.Log.w("ChatViewModel", "Server burn acknowledgement failed: ${result.code}")
+                com.example.payments.GatewayResult.NotConfigured -> Unit
+            }
+        }
+    }
+
+    private fun deleteLocalAttachments(paths: List<String>) {
+        val privateRoots = listOf(context.filesDir, context.cacheDir).map { it.canonicalFile.toPath() }
+        paths.distinct().forEach { path ->
+            val file = File(path).canonicalFile
+            if (privateRoots.any(file.toPath()::startsWith) && file.exists() && !file.delete()) {
+                throw java.io.IOException("Could not delete local chat attachment")
+            }
         }
     }
 
@@ -906,6 +970,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun submitAudioMessage(file: java.io.File) {
         // Send message
+        val generation = historyGeneration
         viewModelScope.launch {
             val userMsg = Message(
                 text = "Голосовое сообщение",
@@ -914,8 +979,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 fileType = "audio",
                 fileName = file.name
             )
-            messageDao.insertMessage(userMsg)
-            generateMalOResponse("Голосовое сообщение", file.absolutePath, "audio", file.name)
+            historyMutex.withLock {
+                if (generation == historyGeneration) messageDao.insertMessage(userMsg)
+                else file.delete()
+            }
+            if (generation == historyGeneration) {
+                generateMalOResponse("Голосовое сообщение", file.absolutePath, "audio", file.name, generation)
+            }
         }
     }
 
