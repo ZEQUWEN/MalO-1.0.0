@@ -9,6 +9,7 @@ import { cryptoRouter } from './routes/crypto.js';
 import { cardsRouter } from './routes/cards.js';
 import { subscriptionRouter } from './routes/subscription.js';
 import { webhooksRouter } from './routes/webhooks.js';
+import { aiRouter } from './routes/ai.js';
 
 /** Absolute webhook URLs to register with each provider. */
 export function webhookUrls(base = config.publicUrl) {
@@ -46,6 +47,7 @@ export function createApp() {
       providers: {
         yookassa: Boolean(config.yookassa.shopId && config.yookassa.secretKey),
         cryptobot: Boolean(config.cryptobot.token),
+        deepseek: Boolean(config.ai.deepseekApiKey),
       },
       webhooks: webhookUrls(),
       time: new Date().toISOString(),
@@ -76,6 +78,7 @@ export function createApp() {
   app.use('/api', cryptoRouter);
   app.use('/api', cardsRouter);
   app.use('/api', subscriptionRouter);
+  app.use('/api', aiRouter);
 
   app.use('/api', (_req, res) =>
     res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Unknown endpoint' } }),

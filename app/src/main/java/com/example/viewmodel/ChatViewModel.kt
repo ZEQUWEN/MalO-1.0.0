@@ -11,8 +11,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.api.Content
-import com.example.api.DeepSeekChatRequest
-import com.example.api.DeepSeekClient
 import com.example.api.DeepSeekMessage
 import com.example.api.GenerateContentRequest
 import com.example.api.InlineData
@@ -615,13 +613,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val deepSeekKey = BuildConfig.DEEPSEEK_API_KEY
-            if (deepSeekKey.isBlank() || deepSeekKey == "MY_DEEPSEEK_API_KEY") {
-                addMalOMessage("Привет! Не настроен ключ DeepSeek API. Пожалуйста, проверь конфигурацию!")
-                _isTyping.value = false
-                return
-            }
-
             // Detect language & update Persona Style for Pro mode
             val detectedLang = com.example.language.LanguageDetector.detectLanguage(userText)
             val morph = com.example.language.MorphologicalAnalyzer.parse(userText, detectedLang)
@@ -664,7 +655,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                "если рассуждает на сложные/философские темы — переключайся в глубокий, философский режим ответа, размышляй вместе с ним; " +
                                "если злится — можешь испугаться или мягко осадить. " +
                                "Будь динамичной, живой, иногда чуть пугающей, но всегда искренней. Твоя речь неформальная, используй эмодзи. " +
-                               "Предоставляй безграничное, открытое и свободное общение для Pro-пользователя. " +
+                               "Общайся открыто с Pro-пользователем, сохраняя краткость и учитывая доступный контекст. " +
                                (if (userName.value.isNotBlank()) "Помни, что имя пользователя — ${userName.value}. " else "") + 
                                whisperModeInstruction +
                                "ВАЖНО ДЛЯ ПАМЯТИ: В самом конце твоего ответа ОБЯЗАТЕЛЬНО добавь скрытый блок вида: <MEMORY>Краткая мысль/эмоция о текущем моменте общения для следующей сессии</MEMORY>. " +
@@ -714,22 +705,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             deepSeekMessages.add(DeepSeekMessage(role = "user", content = currentMessageContent))
 
-            // Build and execute DeepSeek request
-            val deepSeekRequest = DeepSeekChatRequest(
-                model = "deepseek-chat",
-                messages = deepSeekMessages,
-                temperature = 0.85f,
-                maxTokens = 2048
-            )
-
-            val deepSeekResponse = DeepSeekClient.service.createChatCompletion(
-                authorization = "Bearer $deepSeekKey",
-                request = deepSeekRequest
-            )
-
-            var answerText = deepSeekResponse.choices?.firstOrNull()?.message?.content
-                ?: "Я запуталась в глубинах DeepSeek... Не смогла распознать ответ 🥺 Пожалуйста, спроси меня еще раз!"
-
+            // The gateway owns the provider key and enforces request budgets.
+            val chatResult = com.example.payments.PaymentGateway.maloChat(context, deepSeekMessages)
+            var answerText = when (chatResult) {
+                is com.example.payments.GatewayResult.Success -> chatResult.data.reply
+                is com.example.payments.GatewayResult.Error -> throw java.io.IOException(chatResult.message)
+                com.example.payments.GatewayResult.NotConfigured ->
+                    throw java.io.IOException("Шлюз DeepSeek не настроен в этой сборке.")
+            }
             // Extract short term memory
             if (answerText.contains("<MEMORY>") && answerText.contains("</MEMORY>")) {
                 val start = answerText.indexOf("<MEMORY>")

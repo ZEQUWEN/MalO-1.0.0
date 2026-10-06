@@ -537,7 +537,7 @@ fun SubscriptionScreen(
                 pricePeriod = "/ месяц",
                 description = "Полное снятие барьеров. Безграничный доступ к живому интеллекту DeepSeek AI и генерации фото MalO.",
                 features = listOf(
-                    FeatureItem(text = "Безграничное общение на базе DeepSeek AI", included = true, highlight = true),
+                    FeatureItem(text = "Общение на базе DeepSeek AI с учётом контекста", included = true, highlight = true),
                     FeatureItem(text = "Доступ без цензурных зажимов с памятью диалогов", included = true, highlight = true),
                     FeatureItem(text = "Генерация атмосферных фото присутствия MalO", included = true, highlight = true),
                     FeatureItem(text = "Голосовые заметки, синтез и распознавание аудио", included = true),

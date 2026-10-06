@@ -52,6 +52,16 @@ export const config = {
     priceUsd: process.env.MALO_PRICE_USD || '4.99',
   },
 
+  ai: {
+    deepseekApiKey: String(process.env.DEEPSEEK_API_KEY || '').trim(),
+    deepseekApiBase: withoutTrailingSlash(process.env.DEEPSEEK_API_BASE || 'https://api.deepseek.com/v1'),
+    deepseekRequestTimeoutMs: boundedInt(process.env.DEEPSEEK_REQUEST_TIMEOUT_MS, 30_000, 1_000, 60_000),
+    maxInputLength: boundedInt(process.env.MALO_AI_MAX_INPUT_LENGTH, 500, 1, 10_000),
+    maxHistoryBlocks: boundedInt(process.env.MALO_AI_MAX_HISTORY_BLOCKS, 12, 0, 100),
+    maxContextChars: boundedInt(process.env.MALO_AI_MAX_CONTEXT_CHARS, 12_000, 1_000, 100_000),
+    maxOutputTokens: boundedInt(process.env.MALO_AI_MAX_OUTPUT_TOKENS, 200, 1, 2_000),
+  },
+
   yookassa: {
     shopId: process.env.YOOKASSA_SHOP_ID || '',
     secretKey: process.env.YOOKASSA_SECRET_KEY || '',

@@ -91,6 +91,7 @@ variable fails closed with `CLIENT_AUTH_NOT_CONFIGURED`.
 |--------|------|---------|
 | `GET` | `/api/health` | liveness and provider configuration |
 | `GET` | `/api/catalog` | plan, accepted brands, `bank_card` and `sbp` methods |
+| `POST` | `/api/malo/chat` | Pro chat proxy with server-side input, history and output limits |
 | `POST` | `/api/checkout` | start a YooKassa checkout (`paymentMethod: bank_card\|sbp`) |
 | `POST` | `/api/crypto/invoices` | create a fixed-price CryptoBot invoice (`asset`; `network` is a legacy hint) |
 | `GET` | `/api/crypto/invoices/:id?userId=…` | read/poll only the caller's CryptoBot invoice |
@@ -114,6 +115,29 @@ Example request bodies:
 ```json
 {"userId":"malo-installation-id","paymentMethod":"sbp","saveCard":false}
 ```
+
+### DeepSeek budget controls
+
+The Android client submits its current system prompt and locally stored chat
+history to `POST /api/malo/chat`. The server checks the gateway-side Pro
+subscription, then applies limits before forwarding to DeepSeek:
+
+* `MALO_AI_MAX_INPUT_LENGTH` (default `500`) limits the current user message;
+  oversized or empty messages return HTTP 400.
+* `MALO_AI_MAX_HISTORY_BLOCKS` (default `12`) keeps only the latest historical
+  messages, in addition to the system prompt and current message.
+* `MALO_AI_MAX_CONTEXT_CHARS` (default `12000`) caps prompt characters and
+  keeps the newest history that fits. This is a character-based budget guard,
+  not an exact tokenizer count.
+* `MALO_AI_MAX_OUTPUT_TOKENS` (default `200`) sets the provider's `max_tokens`.
+* `DEEPSEEK_API_KEY` is required as a **server runtime variable**. It must not
+  be placed in the Android `.env`, APK, or build arguments.
+* `DEEPSEEK_REQUEST_TIMEOUT_MS` bounds the provider request (default 30 seconds).
+
+The client key alone is not account authentication. The route also requires
+the user ID to have an active subscription in the gateway store; for production
+account security, use authenticated sessions rather than treating a bundled
+client key or installation ID as proof of identity.
 
 ## Railway and production notes
 

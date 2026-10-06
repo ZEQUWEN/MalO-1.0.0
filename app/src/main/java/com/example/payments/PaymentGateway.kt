@@ -1,6 +1,9 @@
 package com.example.payments
 
 import android.content.Context
+import com.example.api.DeepSeekMessage
+import com.example.api.MaloChatRequest
+import com.example.api.MaloChatResponse
 import com.example.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -28,6 +31,9 @@ interface PaymentGatewayApi {
 
     @GET("api/payment/methods")
     suspend fun paymentMethods(): Response<PaymentMethodsResponse>
+
+    @POST("api/malo/chat")
+    suspend fun maloChat(@Body body: MaloChatRequest): Response<MaloChatResponse>
 
     @GET("api/subscription")
     suspend fun subscription(@Query("userId") userId: String): Response<SubscriptionResponse>
@@ -204,6 +210,9 @@ object PaymentGateway {
     suspend fun catalog(): GatewayResult<CatalogResponse> = call { it.catalog() }
 
     suspend fun paymentMethods(): GatewayResult<PaymentMethodsResponse> = call { it.paymentMethods() }
+
+    suspend fun maloChat(context: Context, messages: List<DeepSeekMessage>): GatewayResult<MaloChatResponse> =
+        call { it.maloChat(MaloChatRequest(userId(context), messages)) }
 
     suspend fun subscription(context: Context): GatewayResult<SubscriptionResponse> =
         call { it.subscription(userId(context)) }

@@ -108,13 +108,12 @@ it never replaces a real payment with a demo card transaction.
 
 ## API keys
 
-`.env.example` provides placeholder `GEMINI_API_KEY` and `DEEPSEEK_API_KEY`
-values so the APK can be built without committing secrets. For local
-development, copy it to `.env` and put your own keys there. Do not commit
-`.env`, APK artifacts, or signing keystores.
+`.env.example` provides the placeholder `GEMINI_API_KEY` so the APK can be
+built without committing secrets. DeepSeek is called through the Node gateway:
+set `DEEPSEEK_API_KEY` as a server runtime variable (for example, in Railway),
+never in the Android `.env` or APK. Do not commit `.env`, APK artifacts, or
+signing keystores.
 
-Keys compiled into an Android APK can be extracted by an end user. For a
-production release, keep provider keys behind an authenticated backend instead
-of distributing them in `BuildConfig`. The Railway image intentionally builds
-with placeholders and only hosts the download page; it does not expose API
-provider secrets to the APK.
+Keys compiled into an Android APK can be extracted by an end user. DeepSeek's
+provider key stays behind the gateway. The Railway image intentionally builds
+with placeholders and does not expose provider secrets to the APK.

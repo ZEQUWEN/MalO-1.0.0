@@ -80,7 +80,25 @@ CRYPTOBOT_REQUEST_TIMEOUT_MS=5000
 MALO_PLAN_PERIOD_DAYS=30
 MALO_PRICE_RUB=499.00
 MALO_PRICE_USD=4.99
+
+# Runtime-only AI provider key; never add it as an Android build argument.
+DEEPSEEK_API_KEY=<deepseek-api-key>
+DEEPSEEK_API_BASE=https://api.deepseek.com/v1
+DEEPSEEK_REQUEST_TIMEOUT_MS=30000
+MALO_AI_MAX_INPUT_LENGTH=500
+MALO_AI_MAX_HISTORY_BLOCKS=12
+MALO_AI_MAX_CONTEXT_CHARS=12000
+MALO_AI_MAX_OUTPUT_TOKENS=200
 ```
+
+The app sends Pro chat requests to `POST /api/malo/chat`. The gateway requires
+an active subscription, rejects a current user message longer than 500
+characters, forwards only the latest 12 history messages, and fixes DeepSeek's
+`max_tokens` at 200 by default. It also caps the total prompt at 12,000
+characters by default, preferentially retaining the newest history within that
+budget. These server limits can be lowered or raised within bounded ranges
+using the variables above; changing `DEEPSEEK_API_KEY`
+only requires a runtime redeploy/restart, not an APK rebuild.
 
 ### Android gateway build values
 
