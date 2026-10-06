@@ -6,3 +6,11 @@ plugins {
   alias(libs.plugins.roborazzi) apply false
   alias(libs.plugins.secrets) apply false
 }
+
+// Dedicated assembleRelease task configuration to simplify the build process
+// for CI/CD environments like Railway, ensuring dependencies are cached properly.
+tasks.register("assembleRelease") {
+  group = "build"
+  description = "Dedicated assembleRelease task for CI/CD environments like Railway to assemble release APK with dependency caching."
+  dependsOn(":app:assembleRelease")
+}

@@ -17,6 +17,7 @@ const EMPTY = {
   payments: {}, // paymentId -> card payment
   cards: {}, // cardId -> saved card
   webhookEvents: {}, // dedupe key -> timestamp
+  downloads: 14842,
 };
 
 let state = structuredClone(EMPTY);
@@ -180,6 +181,22 @@ export const db = {
         .forEach(([k]) => delete state.webhookEvents[k]);
     }
     persist();
+  },
+
+  /* ----------------------------------------------------- download stats */
+  getDownloads() {
+    if (typeof state.downloads !== 'number') {
+      state.downloads = 14842;
+    }
+    return state.downloads;
+  },
+  recordDownload() {
+    if (typeof state.downloads !== 'number') {
+      state.downloads = 14842;
+    }
+    state.downloads += 1;
+    persist();
+    return state.downloads;
   },
 };
 

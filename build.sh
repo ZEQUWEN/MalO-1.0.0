@@ -126,15 +126,26 @@ fi
 
 [ -x "$GRADLE_BIN" ] || fail "Gradle bootstrap did not produce an executable."
 
-echo "[MalO build] Building debug APK with Gradle $GRADLE_VERSION..."
-"$GRADLE_BIN" --no-daemon --console=plain :app:assembleDebug
+BUILD_TASK="${MALO_BUILD_TASK:-:app:assembleDebug}"
+echo "[MalO build] Building APK with task $BUILD_TASK (Gradle $GRADLE_VERSION)..."
+"$GRADLE_BIN" --no-daemon --console=plain "$BUILD_TASK"
 
-[ -f "$APK_PATH" ] || fail "Gradle completed, but the expected APK was not created: $APK_PATH"
-unzip -t "$APK_PATH" >/dev/null || fail "Gradle output is not a valid APK archive: $APK_PATH"
+ACTUAL_APK=""
+if [ -f "$APK_PATH" ]; then
+  ACTUAL_APK="$APK_PATH"
+elif [ -f "$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk" ]; then
+  ACTUAL_APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
+elif [ -f "$PROJECT_DIR/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+  ACTUAL_APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release-unsigned.apk"
+else
+  fail "Gradle completed, but no APK output was found in $PROJECT_DIR/app/build/outputs/apk/"
+fi
+
+unzip -t "$ACTUAL_APK" >/dev/null || fail "Gradle output is not a valid APK archive: $ACTUAL_APK"
 
 mkdir -p "$DISTRIBUTION_DIR"
-cp "$APK_PATH" "$DISTRIBUTION_DIR/MalO-1.0.0.apk"
+cp "$ACTUAL_APK" "$DISTRIBUTION_DIR/MalO-1.0.0.apk"
 # Keep the existing mirror URL on the download page working.
-cp "$APK_PATH" "$DISTRIBUTION_DIR/app-debug.apk"
+cp "$ACTUAL_APK" "$DISTRIBUTION_DIR/app-debug.apk"
 
-echo "[MalO build] APK published to public/MalO-1.0.0.apk"
+echo "[MalO build] APK published to public/MalO-1.0.0.apk (from $ACTUAL_APK)"

@@ -10,6 +10,7 @@ import { cardsRouter } from './routes/cards.js';
 import { subscriptionRouter } from './routes/subscription.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { aiRouter } from './routes/ai.js';
+import { db } from './store.js';
 
 /** Absolute webhook URLs to register with each provider. */
 export function webhookUrls(base = config.publicUrl) {
@@ -79,6 +80,14 @@ export function createApp() {
   app.use('/api', cardsRouter);
   app.use('/api', subscriptionRouter);
   app.use('/api', aiRouter);
+
+  app.get('/api/stats/downloads', (_req, res) => {
+    res.json({ ok: true, downloads: db.getDownloads() });
+  });
+
+  app.post('/api/stats/downloads', (_req, res) => {
+    res.json({ ok: true, downloads: db.recordDownload() });
+  });
 
   app.use('/api', (_req, res) =>
     res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Unknown endpoint' } }),

@@ -5,13 +5,17 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,10 +40,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.CurrencyBitcoin
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -69,7 +76,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -155,6 +164,29 @@ fun SubscriptionScreen(
     var selectedCryptoAsset by remember { mutableStateOf(CryptoCatalog.asset("USDT") ?: CryptoCatalog.assets.first()) }
     var activeCryptoInvoice by remember { mutableStateOf<CryptoInvoiceDto?>(null) }
     var cryptoPolling by remember { mutableStateOf(false) }
+
+    // Direction of the swipe/transition: -1 = slide out to left (next), 1 = slide out to right (prev)
+    var swipeDirection by remember { mutableStateOf(-1) }
+
+    fun selectMethodWithDirection(newMethod: PaymentMethod) {
+        if (newMethod == selectedPaymentMethod) return
+        val availableList = listOf(PaymentMethod.CARD, PaymentMethod.SBP, PaymentMethod.CRYPTO)
+            .filter { it.apiId() in enabledPaymentMethods.ifEmpty { setOf("bank_card", "sbp", "cryptobot") } }
+        val curIndex = availableList.indexOf(selectedPaymentMethod)
+        val newIndex = availableList.indexOf(newMethod)
+        swipeDirection = if (newIndex >= curIndex) -1 else 1
+        selectedPaymentMethod = newMethod
+    }
+
+    fun cycleMethodBy(step: Int) {
+        val availableList = listOf(PaymentMethod.CARD, PaymentMethod.SBP, PaymentMethod.CRYPTO)
+            .filter { it.apiId() in enabledPaymentMethods.ifEmpty { setOf("bank_card", "sbp", "cryptobot") } }
+        if (availableList.size <= 1) return
+        val curIndex = availableList.indexOf(selectedPaymentMethod)
+        val nextIndex = (curIndex + step + availableList.size) % availableList.size
+        swipeDirection = if (step > 0) -1 else 1
+        selectedPaymentMethod = availableList[nextIndex]
+    }
 
     // Transaction feedback.
     var transactionStatus by remember { mutableStateOf(TransactionStatus.IDLE) }
@@ -554,7 +586,7 @@ fun SubscriptionScreen(
 
             if (selectedPlan == "pro" && !isProUser) {
                 Text(
-                    text = "СПОСОБ ОПЛАТЫ",
+                    text = "СПОСОБ ОПЛАТЫ • MINI APP",
                     color = Color.Gray,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -563,6 +595,22 @@ fun SubscriptionScreen(
                 )
 
                 if (paymentMethodsLoaded && enabledPaymentMethods.isNotEmpty()) {
+                    // Interactive Mini App with bank-style swipable payment masks
+                    PaymentMiniAppFrame(
+                        selectedMethod = selectedPaymentMethod,
+                        swipeDirection = swipeDirection,
+                        onCycleMethod = { step -> cycleMethodBy(step) },
+                        enabledMethods = enabledPaymentMethods,
+                        cryptoAsset = selectedCryptoAsset,
+                        accentColor = when (selectedPaymentMethod) {
+                            PaymentMethod.CARD -> scpNeonPurple
+                            PaymentMethod.SBP -> scpTerminalGreen
+                            PaymentMethod.CRYPTO -> scpCryptoOrange
+                        },
+                        scpSurface = scpSurface
+                    )
+
+                    // Laconic Segmented Control for Payment Method
                     Surface(
                         color = scpSurface,
                         shape = RoundedCornerShape(12.dp),
@@ -575,9 +623,9 @@ fun SubscriptionScreen(
                                     title = "Карта",
                                     icon = Icons.Default.CreditCard,
                                     isSelected = selectedPaymentMethod == PaymentMethod.CARD,
-                                    activeColor = scpTerminalGreen,
+                                    activeColor = scpNeonPurple,
                                     modifier = Modifier.weight(1f),
-                                    onClick = { selectedPaymentMethod = PaymentMethod.CARD }
+                                    onClick = { selectMethodWithDirection(PaymentMethod.CARD) }
                                 )
                             }
                             if ("sbp" in enabledPaymentMethods) {
@@ -587,7 +635,7 @@ fun SubscriptionScreen(
                                     isSelected = selectedPaymentMethod == PaymentMethod.SBP,
                                     activeColor = scpTerminalGreen,
                                     modifier = Modifier.weight(1f),
-                                    onClick = { selectedPaymentMethod = PaymentMethod.SBP }
+                                    onClick = { selectMethodWithDirection(PaymentMethod.SBP) }
                                 )
                             }
                             if ("cryptobot" in enabledPaymentMethods) {
@@ -597,7 +645,7 @@ fun SubscriptionScreen(
                                     isSelected = selectedPaymentMethod == PaymentMethod.CRYPTO,
                                     activeColor = scpCryptoOrange,
                                     modifier = Modifier.weight(1f),
-                                    onClick = { selectedPaymentMethod = PaymentMethod.CRYPTO }
+                                    onClick = { selectMethodWithDirection(PaymentMethod.CRYPTO) }
                                 )
                             }
                         }
@@ -1528,5 +1576,643 @@ fun ReceiptRow(label: String, value: String) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false)
         )
+    }
+}
+
+/* ------------------------------------------- Interactive Mini App Frame -- */
+
+@Composable
+fun PaymentMiniAppFrame(
+    selectedMethod: PaymentMethod,
+    swipeDirection: Int,
+    onCycleMethod: (Int) -> Unit,
+    enabledMethods: Set<String>,
+    cryptoAsset: CryptoAsset,
+    accentColor: Color,
+    scpSurface: Color,
+    modifier: Modifier = Modifier
+) {
+    val methodsList = listOf(PaymentMethod.CARD, PaymentMethod.SBP, PaymentMethod.CRYPTO)
+        .filter { it.apiId() in enabledMethods.ifEmpty { setOf("bank_card", "sbp", "cryptobot") } }
+    val currentIndex = methodsList.indexOf(selectedMethod).coerceAtLeast(0)
+    val totalMethods = methodsList.size.coerceAtLeast(1)
+
+    var accumulatedDrag by remember { mutableStateOf(0f) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF100E19)),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(
+            1.5.dp,
+            Brush.horizontalGradient(
+                listOf(
+                    accentColor.copy(alpha = 0.8f),
+                    Color(0xFF00FFC4).copy(alpha = 0.5f),
+                    accentColor.copy(alpha = 0.4f)
+                )
+            )
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("payment_mini_app_frame")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
+            // Mini App Header Bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFFF5F56)))
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFFFBD2E)))
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF27C93F)))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "MalO Pay • Mini App",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Surface(
+                        color = Color(0xFF00FFC4).copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(0.5.dp, Color(0xFF00FFC4).copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = Color(0xFF00FFC4),
+                                modifier = Modifier.size(9.dp)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text(
+                                text = "TLS 1.3",
+                                color = Color(0xFF00FFC4),
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = "[ ${currentIndex + 1} / $totalMethods ]",
+                        color = Color.Gray,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(
+                        onClick = { onCycleMethod(-1) },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChevronLeft,
+                            contentDescription = "Предыдущий способ",
+                            tint = Color.LightGray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = { onCycleMethod(1) },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Следующий способ",
+                            tint = Color.LightGray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Interactive Mask Area with Horizontal Drag Gestures and Exit-to-Left Animation
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(selectedMethod, enabledMethods) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { accumulatedDrag = 0f },
+                            onDragEnd = {
+                                val threshold = 35f
+                                if (accumulatedDrag < -threshold) {
+                                    onCycleMethod(1) // Swiped left -> next method
+                                } else if (accumulatedDrag > threshold) {
+                                    onCycleMethod(-1) // Swiped right -> prev method
+                                }
+                                accumulatedDrag = 0f
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                accumulatedDrag += dragAmount
+                            }
+                        )
+                    }
+            ) {
+                AnimatedContent(
+                    targetState = selectedMethod,
+                    transitionSpec = {
+                        if (swipeDirection <= 0) {
+                            (slideInHorizontally(animationSpec = tween(340)) { fullWidth -> fullWidth } +
+                                    fadeIn(animationSpec = tween(280)))
+                                .togetherWith(
+                                    slideOutHorizontally(animationSpec = tween(340)) { fullWidth -> -fullWidth } +
+                                            fadeOut(animationSpec = tween(260))
+                                )
+                        } else {
+                            (slideInHorizontally(animationSpec = tween(340)) { fullWidth -> -fullWidth } +
+                                    fadeIn(animationSpec = tween(280)))
+                                .togetherWith(
+                                    slideOutHorizontally(animationSpec = tween(340)) { fullWidth -> fullWidth } +
+                                            fadeOut(animationSpec = tween(260))
+                                )
+                        }
+                    },
+                    label = "payment_mask_carousel"
+                ) { method ->
+                    when (method) {
+                        PaymentMethod.CARD -> CardPaymentMask()
+                        PaymentMethod.SBP -> SbpPaymentMask()
+                        PaymentMethod.CRYPTO -> CryptoPaymentMask(asset = cryptoAsset)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Footer with Pagination Indicator and Hint
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    methodsList.forEachIndexed { index, method ->
+                        val isSelected = index == currentIndex
+                        val dotColor = when (method) {
+                            PaymentMethod.CARD -> Color(0xFFBB86FC)
+                            PaymentMethod.SBP -> Color(0xFF00FFC4)
+                            PaymentMethod.CRYPTO -> Color(0xFFF7931A)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .height(5.dp)
+                                .width(if (isSelected) 20.dp else 6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(if (isSelected) dotColor else Color.DarkGray.copy(alpha = 0.6f))
+                        )
+                    }
+                }
+
+                Text(
+                    text = "← свайпните маску влево",
+                    color = Color.Gray,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CardPaymentMask(modifier: Modifier = Modifier) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, Color(0xFFBB86FC).copy(alpha = 0.5f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(160.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFF28144B),
+                            Color(0xFF140D26),
+                            Color(0xFF0E0A1A)
+                        )
+                    )
+                )
+                .padding(14.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(width = 32.dp, height = 23.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFFFFD700), Color(0xFFD4AF37), Color(0xFFB8860B))
+                                    )
+                                )
+                                .border(0.5.dp, Color(0xFFFFF8DC), RoundedCornerShape(4.dp))
+                        ) {
+                            HorizontalDivider(
+                                color = Color(0xFF8B6914),
+                                thickness = 0.5.dp,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        }
+
+                        Text(
+                            text = "))))",
+                            color = Color(0xFFBB86FC).copy(alpha = 0.8f),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Surface(
+                        color = Color(0xFFBB86FC).copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, Color(0xFFBB86FC).copy(alpha = 0.6f))
+                    ) {
+                        Text(
+                            text = "MALO BLACK • 499 ₽",
+                            color = Color(0xFFBB86FC),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Column {
+                    Text(
+                        text = "••••   ••••   ••••   1471",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 2.sp
+                    )
+                    Text(
+                        text = "ЗАЩИЩЁННЫЙ ШЛЮЗ ЮKASSA 3-D SECURE",
+                        color = Color.Gray,
+                        fontSize = 8.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    Column {
+                        Text(
+                            text = "HOLDER: DEEPSEEK USER",
+                            color = Color.LightGray,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "VALID THRU: 10/28  CVC: •••",
+                            color = Color.Gray,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = Color(0xFF006643).copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(3.dp),
+                            border = BorderStroke(0.5.dp, Color(0xFF00B074))
+                        ) {
+                            Text("МИР", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                        }
+                        Surface(
+                            color = Color(0xFF1A1F71).copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(3.dp),
+                            border = BorderStroke(0.5.dp, Color(0xFF2A52BE))
+                        ) {
+                            Text("VISA", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                        }
+                        Surface(
+                            color = Color(0xFFEB001B).copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(3.dp),
+                            border = BorderStroke(0.5.dp, Color(0xFFFF5F00))
+                        ) {
+                            Text("MC", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SbpPaymentMask(modifier: Modifier = Modifier) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, Color(0xFF00FFC4).copy(alpha = 0.5f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(160.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFF09362A),
+                            Color(0xFF061E18),
+                            Color(0xFF04120E)
+                        )
+                    )
+                )
+                .padding(14.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            color = Color(0xFF00FFC4).copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(4.dp),
+                            border = BorderStroke(1.dp, Color(0xFF00FFC4))
+                        ) {
+                            Text(
+                                text = "СБП",
+                                color = Color(0xFF00FFC4),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        Text(
+                            text = "Система Быстрых Платежей",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Surface(
+                        color = Color(0xFF00FFC4).copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, Color(0xFF00FFC4).copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = "0% КОМИССИЯ",
+                            color = Color(0xFF00FFC4),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Column {
+                    Text(
+                        text = "ОПЛАТА ЧЕРЕЗ БАНК-КЛИЕНТ",
+                        color = Color(0xFF00FFC4),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "СБП-СЧЁТ: 499 ₽ • БЕЗ ВВОДА ДАННЫХ КАРТЫ",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    Column {
+                        Text(
+                            text = "БАНКИ: Сбер, Т-Банк, ВТБ, Альфа...",
+                            color = Color.LightGray,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "Мгновенный перевод по защищённому каналу ЦБ",
+                            color = Color.Gray,
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(0.5.dp, Color(0xFF00FFC4).copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFF00FFC4), modifier = Modifier.size(11.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("1 КЛИК", color = Color(0xFF00FFC4), fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CryptoPaymentMask(
+    asset: CryptoAsset,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, Color(0xFFF7931A).copy(alpha = 0.5f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(160.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFF381F04),
+                            Color(0xFF1B0E02),
+                            Color(0xFF0E0701)
+                        )
+                    )
+                )
+                .padding(14.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            color = Color(0xFFF7931A).copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(4.dp),
+                            border = BorderStroke(1.dp, Color(0xFFF7931A))
+                        ) {
+                            Text(
+                                text = asset.symbol,
+                                color = Color(0xFFF7931A),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        Text(
+                            text = "Telegram Crypto Pay",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Surface(
+                        color = Color(0xFFF7931A).copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, Color(0xFFF7931A).copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = "АНОНИМНО",
+                            color = Color(0xFFF7931A),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Column {
+                    Text(
+                        text = "TG-INVOICE: 0x1471••••DEEPSEEK",
+                        color = Color(0xFFF7931A),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "СУММА: ~4.99 USDT (ЭКВИВАЛЕНТ 499 ₽)",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    Column {
+                        Text(
+                            text = "СЕТЬ: ${asset.defaultNetwork().title}",
+                            color = Color.LightGray,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "Автоактивация через криптографический вебхук",
+                            color = Color.Gray,
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(0.5.dp, Color(0xFFF7931A).copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Text("⚡ МГНОВЕННО", color = Color(0xFFF7931A), fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
