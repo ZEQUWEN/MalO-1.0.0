@@ -91,30 +91,58 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun syncSubscriptionWithGateway() {
         if (!com.example.payments.PaymentGateway.isConfigured) return
-        viewModelScope.launch {
-            when (val result = com.example.payments.PaymentGateway.subscription(context)) {
-                is com.example.payments.GatewayResult.Success -> {
-                    val remote = result.data.subscription ?: return@launch
-                    if (remote.isActive) {
-                        SubscriptionValidator.activateFromGateway(
-                            context = context,
-                            transactionId = remote.lastTransactionId ?: remote.subscriptionId.orEmpty(),
-                            paymentMethod = remote.paymentMethod ?: "GATEWAY",
-                            amountPaid = remote.lastAmount ?: "",
-                            expiresAt = remote.currentPeriodEnd ?: System.currentTimeMillis()
-                        )
-                        isProUser.value = true
-                    } else if (remote.status == "canceled" || remote.status == "expired") {
-                        SubscriptionValidator.revokeSubscription(context)
-                        isProUser.value = false
-                    }
-                    com.example.payments.CardVault.syncFromGateway(
-                        context,
-                        result.data.cards.map { it.toSavedCard() }
+        viewModelScope.launch { refreshEntitlement() }
+    }
+
+    /**
+     * One gateway round-trip, mirroring the server's answer into the local
+     * receipt, and returning the entitlement the server reported.
+     *
+     * Callers that have to tell the user whether a payment worked MUST await
+     * this instead of reading [isProUser] right after requesting a refresh.
+     * Both checkout paths are confirmed by a webhook to the gateway and never
+     * on the device, so at the moment the paywall closes there is still no
+     * local receipt to read — only the server knows.
+     */
+    suspend fun refreshEntitlement(): Boolean {
+        if (!com.example.payments.PaymentGateway.isConfigured) return isProUser.value
+        when (val result = com.example.payments.PaymentGateway.subscription(context)) {
+            is com.example.payments.GatewayResult.Success -> {
+                val remote = result.data.subscription ?: return isProUser.value
+                if (remote.isActive) {
+                    SubscriptionValidator.activateFromGateway(
+                        context = context,
+                        transactionId = remote.lastTransactionId ?: remote.subscriptionId.orEmpty(),
+                        paymentMethod = remote.paymentMethod ?: "GATEWAY",
+                        amountPaid = remote.lastAmount ?: "",
+                        expiresAt = remote.currentPeriodEnd ?: System.currentTimeMillis()
                     )
+                    isProUser.value = true
+                } else if (remote.status == "canceled" || remote.status == "expired") {
+                    SubscriptionValidator.revokeSubscription(context)
+                    isProUser.value = false
                 }
-                else -> Unit
+                com.example.payments.CardVault.syncFromGateway(
+                    context,
+                    result.data.cards.map { it.toSavedCard() }
+                )
             }
+            // Gateway unreachable: keep whatever the signed local receipt says
+            // rather than revoking access the user has already paid for.
+            else -> Unit
+        }
+        return isProUser.value
+    }
+
+    /**
+     * Resolves the outcome of a checkout the paywall has just reported, then
+     * hands the *settled* result to the UI. Reporting failure before the
+     * gateway has answered would accuse a paying user of a failed payment.
+     */
+    fun confirmPurchase(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            isProUser.value = SubscriptionValidator.isSubscriptionValid(context)
+            onResult(refreshEntitlement())
         }
     }
 
