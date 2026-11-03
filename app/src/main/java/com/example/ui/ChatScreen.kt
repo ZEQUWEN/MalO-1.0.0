@@ -143,28 +143,6 @@ fun ChatScreen(viewModel: ChatViewModel) {
         }
     }
 
-    if (showPaywall) {
-        SubscriptionScreen(
-            isProUser = isProUser,
-            onProPurchased = { 
-                viewModel.checkSubscriptionStatus()
-                if (viewModel.isProUser.value) {
-                    Toast.makeText(context, "Подписка Pro (DeepSeek) активирована!", Toast.LENGTH_SHORT).show()
-                    viewModel.sendMessage("Я приобрел Pro-подписку.")
-                } else {
-                    Toast.makeText(context, "Ошибка валидации платежа и подписки!", Toast.LENGTH_SHORT).show()
-                }
-            },
-            onDowngradeToBase = {
-                viewModel.downgradeToBase()
-                Toast.makeText(context, "Переход на тариф Base выполнен", Toast.LENGTH_SHORT).show()
-                viewModel.sendMessage("Я перешел обратно на тариф Base.")
-            },
-            onDismiss = { showPaywall = false }
-        )
-        return
-    }
-
     // UI only states
     var activeTab by remember { mutableStateOf(0) } // 0 = Chat, 1 = Settings, 2 = Gallery
     var inputText by remember { mutableStateOf("") }
@@ -337,6 +315,37 @@ fun ChatScreen(viewModel: ChatViewModel) {
     val scpCardMalo = if (highContrastMode) Color(0xFF2D2D2D) else Color(0xFF1E1E1E)
     val scpNeonPurple = if (highContrastMode) Color(0xFFE5B3FF) else Color(0xFFBB86FC)
     val scpTerminalGreen = if (highContrastMode) Color(0xFF00FF7F) else Color(0xFF00FFC4)
+
+    if (showPaywall) {
+        SubscriptionScreen(
+            isProUser = isProUser,
+            onProPurchased = {
+                // The gateway is the only party that knows whether the webhook
+                // has settled, so wait for its answer before judging the
+                // payment. Reading isProUser straight after asking for a
+                // refresh only ever sees the stale local receipt.
+                viewModel.confirmPurchase { activated ->
+                    if (activated) {
+                        Toast.makeText(context, "Подписка Pro (DeepSeek) активирована!", Toast.LENGTH_SHORT).show()
+                        viewModel.sendMessage("Я приобрел Pro-подписку.")
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Платёж ещё не подтверждён шлюзом. Подписка включится автоматически.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            },
+            onDowngradeToBase = {
+                viewModel.downgradeToBase()
+                Toast.makeText(context, "Переход на тариф Base выполнен", Toast.LENGTH_SHORT).show()
+                viewModel.sendMessage("Я перешел обратно на тариф Base.")
+            },
+            onDismiss = { showPaywall = false }
+        )
+        return
+    }
 
     Scaffold(
         modifier = Modifier
