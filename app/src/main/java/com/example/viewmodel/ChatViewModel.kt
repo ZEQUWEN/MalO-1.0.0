@@ -110,13 +110,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             is com.example.payments.GatewayResult.Success -> {
                 val remote = result.data.subscription ?: return isProUser.value
                 if (remote.isActive) {
-                    SubscriptionValidator.activateFromGateway(
-                        context = context,
-                        transactionId = remote.lastTransactionId ?: remote.subscriptionId.orEmpty(),
-                        paymentMethod = remote.paymentMethod ?: "GATEWAY",
-                        amountPaid = remote.lastAmount ?: "",
-                        expiresAt = remote.currentPeriodEnd ?: System.currentTimeMillis()
-                    )
+                    // Mirror the entitlement only when the server supplied a
+                    // period end that is still in the future. Falling back to
+                    // `now` would mint a receipt that isSubscriptionValid()
+                    // immediately treats as expired and revokes, dropping Pro
+                    // the moment it was granted.
+                    val periodEnd = remote.currentPeriodEnd ?: 0L
+                    if (periodEnd > System.currentTimeMillis()) {
+                        SubscriptionValidator.activateFromGateway(
+                            context = context,
+                            transactionId = remote.lastTransactionId ?: remote.subscriptionId.orEmpty(),
+                            paymentMethod = remote.paymentMethod ?: "GATEWAY",
+                            amountPaid = remote.lastAmount ?: "",
+                            expiresAt = periodEnd
+                        )
+                    }
+                    // The gateway stays authoritative for this session even
+                    // when no usable period end came back, so access is never
+                    // withheld from someone the server considers paid up.
                     isProUser.value = true
                 } else if (remote.status == "canceled" || remote.status == "expired") {
                     SubscriptionValidator.revokeSubscription(context)
