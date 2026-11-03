@@ -3,22 +3,21 @@ import { config } from '../config.js';
 import { asyncRoute, requireClientKey, requireUserId } from '../middleware.js';
 import { getSubscription } from '../subscriptions.js';
 
-export const aiRouter = Router();
+export function createAiRouter({ middleware = [requireClientKey, requireUserId], subscriptionForUser = getSubscription } = {}) {
+const aiRouter = Router();
 
 aiRouter.post(
   '/malo/burn',
-  requireClientKey,
-  requireUserId,
+  ...middleware,
   // Chat content is never persisted by the gateway; the Android app erases its Room database.
   (_req, res) => res.json({ ok: true, serverHistoryStored: false }),
 );
 
 aiRouter.post(
   '/malo/chat',
-  requireClientKey,
-  requireUserId,
+  ...middleware,
   asyncRoute(async (req, res) => {
-    const subscription = getSubscription(req.userId);
+    const subscription = await subscriptionForUser(req.userId);
     if (
       subscription.status !== 'active' ||
       !Number.isFinite(subscription.currentPeriodEnd) ||
@@ -165,3 +164,8 @@ aiRouter.post(
     return res.json({ ok: true, reply });
   }),
 );
+
+return aiRouter;
+}
+
+export const aiRouter = createAiRouter();

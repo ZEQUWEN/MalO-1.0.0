@@ -15,6 +15,7 @@ process.env.MALO_MOCK_PROVIDERS = '0';
 process.env.CRYPTOBOT_API_BASE = 'https://pay.crypt.bot/api';
 
 const { cryptobot, CryptoBotError } = await import('../src/providers/cryptobot.js');
+const { resetProviderCircuitsForTests } = await import('../src/provider-breaker.js');
 
 const realFetch = globalThis.fetch;
 
@@ -29,6 +30,7 @@ function stubFetch({ status, body, headers = {} }) {
 
 test.afterEach(() => {
   globalThis.fetch = realFetch;
+  resetProviderCircuitsForTests();
 });
 
 const newInvoice = () =>

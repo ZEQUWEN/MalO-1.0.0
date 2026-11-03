@@ -60,6 +60,8 @@ webhooksRouter.post(
     }
     const dedupeKey = `cryptobot:invoice_paid:${stored.invoiceId}`;
     if (stored.status === 'paid' || db.seenWebhook(dedupeKey)) {
+      // A previous attempt may have updated memory but failed to persist.
+      db.flushNow();
       return res.json({ ok: true, duplicate: true });
     }
 

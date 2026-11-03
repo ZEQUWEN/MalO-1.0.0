@@ -77,43 +77,59 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         userName.value = name
     }
 
-    val isProUser = MutableStateFlow(SubscriptionValidator.isSubscriptionValid(context))
+    val isProUser = MutableStateFlow(com.example.payments.AccountGateway.hasSession(context) && SubscriptionValidator.isSubscriptionValid(context))
 
     fun checkSubscriptionStatus() {
+        if (!com.example.payments.AccountGateway.hasSession(context)) {
+            SubscriptionValidator.revokeSubscription(context)
+            isProUser.value = false
+            return
+        }
         isProUser.value = SubscriptionValidator.isSubscriptionValid(context)
         syncSubscriptionWithGateway()
     }
 
     /**
      * Reconciles the local receipt with the payment gateway. Needed after the
-     * user pays a CryptoBot invoice or completes 3-D Secure in a browser:
-     * the confirmation arrives at our webhook, not at the device.
+     * user returns from Ko-fi: confirmation arrives at the webhook, not the device.
      */
+    private val subscriptionSyncMutex = Mutex()
+
     fun syncSubscriptionWithGateway() {
-        if (!com.example.payments.PaymentGateway.isConfigured) return
+        if (!com.example.payments.AccountGateway.isConfigured) return
         viewModelScope.launch {
-            when (val result = com.example.payments.PaymentGateway.subscription(context)) {
-                is com.example.payments.GatewayResult.Success -> {
-                    val remote = result.data.subscription ?: return@launch
-                    if (remote.isActive) {
-                        SubscriptionValidator.activateFromGateway(
-                            context = context,
-                            transactionId = remote.lastTransactionId ?: remote.subscriptionId.orEmpty(),
-                            paymentMethod = remote.paymentMethod ?: "GATEWAY",
-                            amountPaid = remote.lastAmount ?: "",
-                            expiresAt = remote.currentPeriodEnd ?: System.currentTimeMillis()
-                        )
-                        isProUser.value = true
-                    } else if (remote.status == "canceled" || remote.status == "expired") {
-                        SubscriptionValidator.revokeSubscription(context)
-                        isProUser.value = false
+            subscriptionSyncMutex.withLock {
+                val account = com.example.payments.AccountGateway.sessionFingerprint(context) ?: return@withLock
+                val result = com.example.payments.AccountGateway.subscription(context)
+                // A logout or a switch to another account must invalidate an
+                // earlier in-flight response before it touches the local cache.
+                if (com.example.payments.AccountGateway.sessionFingerprint(context) != account) return@withLock
+                when (result) {
+                    is com.example.payments.GatewayResult.Success -> {
+                        val remote = result.data.subscription ?: return@launch
+                        if (remote.isActive) {
+                            SubscriptionValidator.activateFromGateway(
+                                context = context,
+                                transactionId = remote.lastTransactionId ?: remote.subscriptionId.orEmpty(),
+                                paymentMethod = remote.paymentMethod ?: "GATEWAY",
+                                amountPaid = remote.lastAmount ?: "",
+                                expiresAt = remote.currentPeriodEnd ?: System.currentTimeMillis()
+                            )
+                            isProUser.value = true
+                        } else {
+                            SubscriptionValidator.revokeSubscription(context)
+                            isProUser.value = false
+                        }
                     }
-                    com.example.payments.CardVault.syncFromGateway(
-                        context,
-                        result.data.cards.map { it.toSavedCard() }
-                    )
+                    is com.example.payments.GatewayResult.Error -> {
+                        if (result.code == "UNAUTHORIZED" || result.code == "HTTP_401") {
+                            com.example.payments.AccountGateway.clearSession(context)
+                            SubscriptionValidator.revokeSubscription(context)
+                            isProUser.value = false
+                        }
+                    }
+                    else -> Unit
                 }
-                else -> Unit
             }
         }
     }
@@ -121,11 +137,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun downgradeToBase() {
         SubscriptionValidator.revokeSubscription(context)
         isProUser.value = false
-        if (com.example.payments.PaymentGateway.isConfigured) {
-            viewModelScope.launch {
-                com.example.payments.PaymentGateway.cancelSubscription(context, immediate = true)
-            }
-        }
+        // Ko-fi grants a prepaid period, not a recurring subscription. Do not
+        // pretend that clearing this device cache cancels the server entitlement.
     }
 
 
@@ -724,7 +737,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             deepSeekMessages.add(DeepSeekMessage(role = "user", content = currentMessageContent))
 
             // The gateway owns the provider key and enforces request budgets.
-            val chatResult = com.example.payments.PaymentGateway.maloChat(context, deepSeekMessages)
+            val chatResult = com.example.payments.AccountGateway.chat(context, deepSeekMessages)
             var answerText = when (chatResult) {
                 is com.example.payments.GatewayResult.Success -> chatResult.data.reply
                 is com.example.payments.GatewayResult.Error -> throw java.io.IOException(chatResult.message)
@@ -919,7 +932,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            when (val result = com.example.payments.PaymentGateway.burnHistory(context)) {
+            when (val result = com.example.payments.AccountGateway.burn(context)) {
                 is com.example.payments.GatewayResult.Success -> Unit
                 is com.example.payments.GatewayResult.Error ->
                     android.util.Log.w("ChatViewModel", "Server burn acknowledgement failed: ${result.code}")

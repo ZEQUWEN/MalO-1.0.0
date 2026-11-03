@@ -11,6 +11,7 @@ import { subscriptionRouter } from './routes/subscription.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { aiRouter } from './routes/ai.js';
 import { db } from './store.js';
+import { createV2Router } from './v2/routes.js';
 
 /** Absolute webhook URLs to register with each provider. */
 export function webhookUrls(base = config.publicUrl) {
@@ -21,22 +22,24 @@ export function webhookUrls(base = config.publicUrl) {
   };
 }
 
-export function createApp() {
+export function createApp({ v2 = {}, allowUnsafeLegacyApi = false } = {}) {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', true);
 
   app.use(requestLogger);
 
   // Webhooks need the untouched bytes for signature verification, so the raw
   // parser is mounted on their paths only — before the JSON body parser.
-  app.use(
-    ['/api/webhooks/cryptobot', '/api/webhooks/yookassa'],
-    express.raw({ type: '*/*', limit: '256kb' }),
-  );
-  app.use('/api', webhooksRouter);
+  if (allowUnsafeLegacyApi) {
+    app.use(
+      ['/api/webhooks/cryptobot', '/api/webhooks/yookassa'],
+      express.raw({ type: '*/*', limit: '256kb' }),
+    );
+    app.use('/api', webhooksRouter);
+  }
 
   app.use(express.json({ limit: '128kb' }));
+  app.use('/api/v2', createV2Router(v2));
 
   app.get('/api/health', (_req, res) =>
     res.json({
@@ -46,17 +49,17 @@ export function createApp() {
       mock: config.mockProviders,
       publicUrl: config.publicUrl,
       providers: {
-        yookassa: Boolean(config.yookassa.shopId && config.yookassa.secretKey),
-        cryptobot: Boolean(config.cryptobot.token),
+        yookassa: allowUnsafeLegacyApi && Boolean(config.yookassa.shopId && config.yookassa.secretKey),
+        cryptobot: allowUnsafeLegacyApi && Boolean(config.cryptobot.token),
         deepseek: Boolean(config.ai.deepseekApiKey),
       },
-      webhooks: webhookUrls(),
+      webhooks: allowUnsafeLegacyApi ? webhookUrls() : { kofi: `${config.publicUrl}/api/v2/webhooks/kofi` },
       time: new Date().toISOString(),
     }),
   );
 
   /** Convenience endpoint: the exact URLs to paste into each provider. */
-  app.get('/api/webhooks', (_req, res) =>
+  if (allowUnsafeLegacyApi) app.get('/api/webhooks', (_req, res) =>
     res.json({
       ok: true,
       publicUrl: config.publicUrl,
@@ -75,11 +78,15 @@ export function createApp() {
     }),
   );
 
-  app.use('/api', catalogRouter);
-  app.use('/api', cryptoRouter);
-  app.use('/api', cardsRouter);
-  app.use('/api', subscriptionRouter);
-  app.use('/api', aiRouter);
+  // Legacy endpoints trust a client-selected userId and cannot be exposed
+  // alongside authenticated accounts. The opt-in is for isolated tests only.
+  if (allowUnsafeLegacyApi) {
+    app.use('/api', catalogRouter);
+    app.use('/api', cryptoRouter);
+    app.use('/api', cardsRouter);
+    app.use('/api', subscriptionRouter);
+    app.use('/api', aiRouter);
+  }
 
   app.get('/api/stats/downloads', (_req, res) => {
     res.json({ ok: true, downloads: db.getDownloads() });

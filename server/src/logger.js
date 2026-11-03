@@ -13,8 +13,8 @@ export function requestLogger(req, res, next) {
 
   res.on('finish', () => {
     const ms = Number(process.hrtime.bigint() - started) / 1e6;
-    const ip = (req.get('x-forwarded-for') || req.socket?.remoteAddress || '-').split(',')[0].trim();
-    const line = `[malo-gateway] ${now()} ${ip} "${req.method} ${req.originalUrl}" ${res.statusCode} ${ms.toFixed(1)}ms`;
+    const ip = req.socket?.remoteAddress || '-';
+    const line = `[malo-gateway] ${now()} ${ip} "${req.method} ${req.path}" ${res.statusCode} ${ms.toFixed(1)}ms`;
 
     if (res.statusCode >= 500) {
       console.error(line);

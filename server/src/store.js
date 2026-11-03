@@ -34,8 +34,9 @@ export function initStore(dir = config.dataDir) {
       state = { ...structuredClone(EMPTY), ...JSON.parse(fs.readFileSync(filePath, 'utf8')) };
       fs.chmodSync(filePath, 0o600);
     } catch {
-      state = structuredClone(EMPTY);
-      flush();
+      // Never overwrite a legacy payment database just because loading it
+      // failed. An operator can restore or inspect the original file.
+      throw new Error('Unable to load legacy gateway state; file was not modified');
     }
   } else {
     state = structuredClone(EMPTY);

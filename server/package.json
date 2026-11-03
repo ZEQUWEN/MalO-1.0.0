@@ -2,7 +2,7 @@
   "name": "malo-payment-gateway",
   "version": "1.0.0",
   "private": true,
-  "description": "MalO 1.0.0 payment gateway: YooKassa card and SBP billing, saved cards with recurring charges, and verified webhooks.",
+  "description": "MalO gateway: PostgreSQL-backed email accounts and Ko-fi payments.",
   "type": "module",
   "main": "src/index.js",
   "engines": {
@@ -11,9 +11,15 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "db:migrate": "node src/v2/migrate.js"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "nodemailer": "^10.3.1",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15"
   }
 }

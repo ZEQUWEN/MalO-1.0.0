@@ -22,7 +22,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
-  server = createApp().listen(0, '127.0.0.1');
+  server = createApp({ allowUnsafeLegacyApi: true }).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -416,4 +416,32 @@ test('unknown api route returns a structured 404', async () => {
 test.after(() => {
   resetStore();
   fs.rmSync(process.env.MALO_DATA_DIR, { recursive: true, force: true });
+});
+
+test('expired CryptoBot invoices can be replaced and a late paid webhook still settles once', async () => {
+  const user = 'malo-expired-invoice-user';
+  const create = () => api('/api/crypto/invoices', {
+    method: 'POST', body: JSON.stringify({ userId: user, asset: 'USDT', network: 'TRON' }),
+  });
+  const { invoice } = await (await create()).json();
+  const providerInvoice = __mockMarkPaid(invoice.invoiceId);
+  providerInvoice.status = 'expired';
+  const expired = await (await api(`/api/crypto/invoices/${invoice.invoiceId}?userId=${user}`)).json();
+  assert.equal(expired.invoice.status, 'expired');
+  assert.equal(expired.subscription.status, 'inactive');
+  const replacement = await (await create()).json();
+  assert.notEqual(replacement.invoice.invoiceId, invoice.invoiceId);
+
+  __mockMarkPaid(invoice.invoiceId);
+  const raw = JSON.stringify({ update_type: 'invoice_paid', payload: { invoice_id: invoice.invoiceId } });
+  const hook = () => fetch(`${baseUrl}/api/webhooks/cryptobot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'crypto-pay-api-signature': signCryptoBotPayload(raw, process.env.CRYPTOBOT_TOKEN) },
+    body: raw,
+  });
+  assert.equal((await hook()).status, 200);
+  const end = db.getSubscription(user).currentPeriodEnd;
+  assert.equal(db.getInvoice(invoice.invoiceId).status, 'paid');
+  assert.equal((await (await hook()).json()).duplicate, true);
+  assert.equal(db.getSubscription(user).currentPeriodEnd, end);
 });

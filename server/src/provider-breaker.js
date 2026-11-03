@@ -2,6 +2,11 @@ const FAILURE_THRESHOLD = 3;
 const COOLDOWN_MS = 30_000;
 const breakers = new Map();
 
+/** Reset isolation for tests; production code must not reset circuit state. */
+export function resetProviderCircuitsForTests() {
+  breakers.clear();
+}
+
 export function isProviderCircuitOpen(provider, now = Date.now()) {
   const state = breakers.get(provider);
   return Boolean(state && state.openedUntil > now);

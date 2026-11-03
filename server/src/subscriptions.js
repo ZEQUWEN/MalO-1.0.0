@@ -1,8 +1,8 @@
 /**
  * Subscription lifecycle shared by both payment rails (card + crypto).
  *
- * A subscription is signed with HMAC-SHA256 so the Android client can verify
- * that the payload it caches locally really came from this gateway.
+ * The HMAC is retained for compatibility; the shipped Android client does not
+ * verify it, and a shared client key cannot authenticate an individual user.
  */
 
 import crypto from 'node:crypto';
