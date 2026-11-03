@@ -1,158 +1,84 @@
-# MalO payment gateway
+# MalO gateway: account and Ko-fi v2
 
-Node/Express gateway for the Android app. It is designed for a Railway service
-that owns the YooKassa integration, so the APK contains no YooKassa secret and
-never receives card data.
+**Status: experimental; not cleared for live payments.** The Node service has
+PostgreSQL-backed email accounts, sessions, one-time Ko-fi payments and paid AI
+routes. The old client-selected `userId` API and YooKassa/CryptoBot webhooks are
+disabled in the deployed app; old subscriptions are not migrated. Existing APKs
+cannot use the v2 API. Back up the legacy JSON state and reconcile any in-flight
+payments before switching deployments; do not discard it.
 
-## Payment model
+## Setup
 
-* **Card checkout** — `bank_card` redirect flow in YooKassa. PAN, expiry, CVC,
-  and 3-D Secure are entered on YooKassa's page. After `payment.succeeded`, the
-  gateway stores only YooKassa's reusable `payment_method.id`; the app receives
-  only payment scheme, masked number, expiry, and default-card state.
-* **Saved cards / auto-renewal** — the server charges the selected saved
-  `payment_method.id`. It never returns that token to Android.
-* **СБП** — explicit `sbp` redirect checkout, usable for initial payment and
-  manual extension of an active subscription. СБП creates no local saved card;
-  auto-renewal remains a selected-card operation.
-* **Telegram CryptoBot** — the gateway creates a Crypto Pay invoice for the
-  server price and opens the returned bot/Mini App URL. Crypto Pay — not the
-  Android app — POSTs `invoice_paid` to Railway. The server verifies the
-  raw-body HMAC, refetches the provider invoice, then compares invoice ID,
-  `paid` status, asset, exact decimal amount and the byte-for-byte
-  server-generated payload before granting Pro. The paid invoice and
-  entitlement are durably stored before it returns a 2xx response.
-* **«Мои карты»** — Android renders a swipeable card pager from `GET /api/cards`
-  and makes default/remove operations through this gateway. It has no raw-card
-  input fields.
+1. Configure a PostgreSQL instance and runtime `DATABASE_URL`, with authenticated
+   connection and encryption appropriate to the deployment. Limit database
+   access; use backups and a least-privilege DB account.
+2. Configure `MALO_AUTH_PEPPER` (random secret of at least 32 bytes), `SMTP_URL`
+   and `MALO_MAIL_FROM`. The SMTP server must support TLS (`smtps://`) or
+   STARTTLS (`smtp://`). Codes never appear in API responses or request logs.
+3. Configure `KOFI_PAGE_URL` (an `https://ko-fi.com/...` URL),
+   `KOFI_VERIFICATION_TOKEN`, `MALO_PRICE_USD` and `MALO_PLAN_PERIOD_DAYS`.
+   The Ko-fi page must accept **one-time donations** in USD at the exact plan
+   amount. Webhook: `https://YOUR_DOMAIN/api/v2/webhooks/kofi`. Set secrets in
+   Railway runtime variables only; never send them in chat or put them in an APK.
+4. Run `cd server && npm ci && npm run db:migrate` against the intended database
+   before starting the service. Migration is explicit and uses a transaction;
+   it creates v2 tables without reading or deleting legacy JSON. This is an
+   initial schema, not a full versioned migration system.
+5. Set `MALO_GATEWAY_URL` to the HTTPS public gateway URL at **Android build
+   time**. Rebuild the APK. No shared client key is used for v2.
 
-## Run locally
+The application listens on `$PORT`. Missing PostgreSQL/SMTP/Ko-fi configuration
+fails closed for the relevant endpoints. The Node server does not load `.env`
+automatically; export variables or configure them on Railway.
 
-```sh
-cd server
-npm ci
-cp .env.example .env     # fill in the provider keys
-npm start                # http://localhost:8080
-```
+## API
 
-Automated tests use no real provider requests:
+- `POST /api/v2/auth/request-code` — `{ "email": "..." }`; sends an 8-digit
+  code over SMTP, valid 10 minutes. Per-email cooldown and DB-backed shared/IP
+  limits apply; because client-supplied forwarded headers aren't trusted, all
+  clients behind a reverse proxy may share an IP bucket. Configure and test a
+  trusted edge rate limiter for the actual deployment before going live.
+- `POST /api/v2/auth/verify-code` — `{ "email": "...", "code": "..." }`;
+  returns a random bearer `sessionToken`, valid 30 days. Only its hash is stored.
+- `POST /api/v2/auth/logout` — bearer token; revokes that session.
+- `GET /api/v2/subscription` — bearer token; resolves account on the server.
+- `POST /api/v2/kofi/intents` — bearer token; creates a 30-minute one-time
+  payment code, exact USD price and Ko-fi URL. Android copies the code for the
+  user to paste **as the entire Ko-fi message**. There is no documented prefill.
+- `POST /api/v2/kofi/intent-status` — bearer token and `{ "paymentToken": "..." }`;
+  only the owner can poll the status. Never put codes in URLs or logs.
+- `POST /api/v2/webhooks/kofi` — form-encoded `data` containing Ko-fi JSON. The
+  verification token, both provider IDs, event type, amount, currency, intent
+  expiry and one-time consumption are checked before granting a prepaid period.
+  The DB transaction records both IDs, consumes the intent, and updates the
+  entitlement atomically. Duplicates do not add a period; conflicting IDs are
+  recorded for investigation. Unknown, incorrect, expired or recurring events
+  are recorded for manual review, not automatically credited.
+- `POST /api/v2/malo/chat` and `/api/v2/malo/burn` — bearer token; paid chat is
+  checked against PostgreSQL on every request. Configure `DEEPSEEK_API_KEY` on
+  the server. No legacy `userId` from the request is used.
 
-```sh
-MALO_MOCK_PROVIDERS=1 npm test
-```
+## Before accepting money
 
-## YooKassa webhook
+Ko-fi's verification token is a shared bearer secret, **not a cryptographic
+signature**. Anyone with that token can forge a webhook. Restrict infrastructure
+access, avoid logging payloads, rotate compromised tokens and independently
+reconcile payments; risk is not zero. A public payment message can expose its
+code, so never use the payment code for login/recovery. Ko-fi test notifications
+and payment reversals require operational review; refunds, disputes, recurring
+payments, support tools, and reconciliation are **not implemented**. A webhook
+received after the 30-minute deadline is queued for manual review even if the
+payment may have been timely. Do not promise instant activation in that case.
 
-Register this HTTPS URL in YooKassa dashboard → **Интеграция →
-HTTP-уведомления**:
+Operators must monitor `v2_kofi_events WHERE result='review'` and
+`v2_kofi_conflicts`; verify real transactions in Ko-fi/payment-provider records
+before correcting anything. There is currently no safe automated operator
+approval UI. Plan for retention and cleanup of rate buckets, expired challenges,
+sessions and intents; configure backups and observability without secrets.
 
-```text
-https://malo.up.railway.app/api/webhooks/yookassa
-```
+## Tests
 
-Select `payment.succeeded`, `payment.canceled`, and `refund.succeeded`.
-`YOOKASSA_VERIFY_NETWORK=1` restricts notifications to YooKassa's documented
-source subnets. The handler is replay-protected and idempotent by
-`event:payment_id`, so a retry cannot add a second subscription period.
-
-## CryptoBot webhook
-
-Set a **fresh** Crypto Pay API token as the Railway-only `CRYPTOBOT_TOKEN`
-variable. Do not place it in `app/.env`, `BuildConfig`, source code, or Git.
-In Telegram: **@CryptoBot → Crypto Pay → My Apps → [app] → Webhooks → Enable**
-and enter:
-
-```text
-https://malo.up.railway.app/api/webhooks/cryptobot
-```
-
-Crypto Pay retries failed webhook delivery. The route reads the unparsed body
-and accepts it only when `crypto-pay-api-signature` equals
-`HMAC-SHA256(SHA256(CRYPTOBOT_TOKEN), rawBody)`. This signature is required
-**even when `MALO_MOCK_PROVIDERS=1`** so a mistaken mock setting cannot make an
-unsigned entitlement endpoint. `update_id` is documented as non-unique, so
-deduplication is by immutable paid invoice ID rather than update ID. A valid
-signature alone is not enough: the server refetches the invoice and checks the
-provider's `paid` status, asset and exact decimal amount against the locally
-created invoice and compares the opaque JSON payload byte-for-byte.
-
-Crypto Pay invoices are paid from a Crypto Bot balance. The Crypto Pay invoice
-API accepts an asset, not an external blockchain-network transaction; the
-legacy `network` request field is a backwards-compatible app hint only and is
-not treated as payment proof.
-
-## App-facing API
-
-All app endpoints require `userId`. In a non-mock gateway, `MALO_CLIENT_KEY`
-is required and requests must include it in `X-MalO-Client-Key`; a missing
-variable fails closed with `CLIENT_AUTH_NOT_CONFIGURED`.
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/health` | liveness and provider configuration |
-| `GET` | `/api/catalog` | plan, accepted brands, `bank_card` and `sbp` methods |
-| `POST` | `/api/malo/chat` | Pro chat proxy with server-side input, history and output limits |
-| `POST` | `/api/malo/burn` | acknowledge a local chat-history wipe request |
-| `POST` | `/api/checkout` | start a YooKassa checkout (`paymentMethod: bank_card\|sbp`) |
-| `POST` | `/api/crypto/invoices` | create a fixed-price CryptoBot invoice (`asset`; `network` is a legacy hint) |
-| `GET` | `/api/crypto/invoices/:id?userId=…` | read/poll only the caller's CryptoBot invoice |
-| `POST` | `/api/cards/checkout` | compatibility alias for old Android builds |
-| `GET` | `/api/cards/payments/:id?userId=…` | poll a pending YooKassa confirmation |
-| `GET` | `/api/cards?userId=…` | saved card descriptors only — never PAN/token |
-| `POST` | `/api/cards/:id/default` | select a card for auto-renewal |
-| `DELETE` | `/api/cards/:id?userId=…` | forget a card and revoke its stored token |
-| `GET` | `/api/subscription?userId=…` | current entitlement (HMAC-signed) |
-| `POST` | `/api/subscription/cancel` | cancel auto-renewal (`immediate: true` revokes now) |
-| `POST` | `/api/subscription/resume` | re-enable selected-card auto-renewal |
-| `POST` | `/api/subscription/charge` | charge the selected saved card |
-| `POST` | `/api/subscription/run-renewals` | single-instance cron/worker endpoint |
-
-Example request bodies:
-
-```json
-{"userId":"malo-installation-id","paymentMethod":"bank_card","saveCard":true}
-```
-
-```json
-{"userId":"malo-installation-id","paymentMethod":"sbp","saveCard":false}
-```
-
-### DeepSeek budget controls
-
-The Android client submits its current system prompt and locally stored chat
-history to `POST /api/malo/chat`. The server checks the gateway-side Pro
-subscription, then applies limits before forwarding to DeepSeek:
-
-* `MALO_AI_MAX_INPUT_LENGTH` (default `500`) limits the current user message;
-  oversized or empty messages return HTTP 400.
-* `MALO_AI_MAX_HISTORY_BLOCKS` (default `12`) keeps only the latest historical
-  messages, in addition to the system prompt and current message.
-* `MALO_AI_MAX_CONTEXT_CHARS` (default `12000`) caps prompt characters and
-  keeps the newest history that fits. This is a character-based budget guard,
-  not an exact tokenizer count.
-* `MALO_AI_MAX_OUTPUT_TOKENS` (default `200`) sets the provider's `max_tokens`.
-* `DEEPSEEK_API_KEY` is required as a **server runtime variable**. It must not
-  be placed in the Android `.env`, APK, or build arguments.
-* `DEEPSEEK_REQUEST_TIMEOUT_MS` bounds the provider request (default 30 seconds).
-
-Chat messages and history are held in the Android Room database, not persisted
-by this gateway. The app's Burn History action deletes the local message rows
-and its local short-term AI memory, then calls `POST /api/malo/burn` for an
-acknowledgement; the route reports `serverHistoryStored: false`. It does not
-delete subscription, payment, or card records.
-
-The client key alone is not account authentication. The route also requires
-the user ID to have an active subscription in the gateway store; for production
-account security, use authenticated sessions rather than treating a bundled
-client key or installation ID as proof of identity.
-
-## Railway and production notes
-
-Set `MALO_DATA_DIR=/app/.data` and attach a Railway Volume at that path. The
-included JSON store is safe for a single Railway instance only; use a real
-transactional store (for example PostgreSQL) before running more than one
-instance or worker.
-
-A key bundled in an APK is not a user-authentication system. For a commercial
-RuStore release, add an authenticated account/session layer before relying on
-`userId` ownership or using a client key as an access-control boundary.
+`npm test` runs unit and HTTP tests with PGlite. To additionally run the real
+multi-connection PostgreSQL concurrency test against an isolated test database,
+set `TEST_DATABASE_URL` and run `npm test`. The test creates/drops its own schema.
+Real SMTP, Ko-fi and Android device testing are still required before launch.

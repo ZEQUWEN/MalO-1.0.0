@@ -62,6 +62,18 @@ class SubscriptionValidatorTest {
     }
 
     @Test
+    fun `new confirmed receipt replaces an expired receipt`() {
+        SubscriptionValidator.activateFromGateway(
+            context, "old-payment", "CRYPTO", "4.99 USDT", System.currentTimeMillis() - 1
+        )
+        assertFalse(SubscriptionValidator.isSubscriptionValid(context))
+        val expiry = System.currentTimeMillis() + 60_000
+        SubscriptionValidator.activateFromGateway(context, "new-payment", "CRYPTO", "4.99 USDT", expiry)
+        assertTrue(SubscriptionValidator.isSubscriptionValid(context))
+        assertEquals("new-payment", SubscriptionValidator.getActiveReceipt(context)?.transactionId)
+    }
+
+    @Test
     fun `revoke removes the cached entitlement`() {
         SubscriptionValidator.activateFromGateway(
             context = context,

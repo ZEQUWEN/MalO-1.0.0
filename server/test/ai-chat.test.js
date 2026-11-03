@@ -34,7 +34,7 @@ test.before(async () => {
     return realFetch(input, init);
   };
 
-  server = createApp().listen(0, '127.0.0.1');
+  server = createApp({ allowUnsafeLegacyApi: true }).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });

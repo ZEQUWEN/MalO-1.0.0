@@ -144,21 +144,12 @@ fun ChatScreen(viewModel: ChatViewModel) {
     }
 
     if (showPaywall) {
-        SubscriptionScreen(
+        AccountSubscriptionScreen(
             isProUser = isProUser,
             onProPurchased = { 
+                // The gateway request is asynchronous. Do not read isProUser
+                // immediately or report a failure before reconciliation finishes.
                 viewModel.checkSubscriptionStatus()
-                if (viewModel.isProUser.value) {
-                    Toast.makeText(context, "Подписка Pro (DeepSeek) активирована!", Toast.LENGTH_SHORT).show()
-                    viewModel.sendMessage("Я приобрел Pro-подписку.")
-                } else {
-                    Toast.makeText(context, "Ошибка валидации платежа и подписки!", Toast.LENGTH_SHORT).show()
-                }
-            },
-            onDowngradeToBase = {
-                viewModel.downgradeToBase()
-                Toast.makeText(context, "Переход на тариф Base выполнен", Toast.LENGTH_SHORT).show()
-                viewModel.sendMessage("Я перешел обратно на тариф Base.")
             },
             onDismiss = { showPaywall = false }
         )

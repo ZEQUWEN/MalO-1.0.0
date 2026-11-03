@@ -29,9 +29,9 @@ object SubscriptionValidator {
 
     /**
      * Mirrors an entitlement confirmed by the payment gateway into a locally
-     * signed receipt, so the app keeps working offline until the paid period
-     * runs out. This function is only called with a server-confirmed result;
-     * the APK has no local card or transaction "success" path.
+     * cached receipt, so the app can work offline until the paid period runs
+     * out. Its checksum is not a security signature: the key is in the APK.
+     * Paid server features must always verify entitlement on the server.
      */
     fun activateFromGateway(
         context: Context,
@@ -70,13 +70,14 @@ object SubscriptionValidator {
     }
 
     /**
-     * Verifies that the subscription receipt is authentic and unexpired.
+     * Checks the local cache for accidental corruption and expiry. This is not
+     * proof of payment; the server must enforce access to paid features.
      */
     fun isSubscriptionValid(context: Context): Boolean {
         val receipt = getActiveReceipt(context) ?: return false
         val now = System.currentTimeMillis()
 
-        if (now > receipt.expiresAt) {
+        if (now >= receipt.expiresAt) {
             revokeSubscription(context)
             return false
         }

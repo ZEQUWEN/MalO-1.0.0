@@ -1,6 +1,5 @@
 package com.example
 
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,7 +17,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        instance = this
         enableEdgeToEdge()
 
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
@@ -39,12 +37,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    companion object {
-        @Volatile
-        private var instance: MainActivity? = null
-
-        fun getStaticContext(): Context {
-            return instance?.applicationContext ?: throw IllegalStateException("MainActivity not initialized yet")
-        }
-    }
 }

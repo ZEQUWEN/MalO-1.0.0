@@ -301,8 +301,15 @@ cryptoRouter.get(
         if (settled.validation) {
           return res.status(409).json({ ok: false, error: settled.validation });
         }
+      } else if (remote && Number(remote.invoice_id) === Number(stored.invoiceId) &&
+                 String(remote.status || '').toLowerCase() === 'expired' && stored.status === 'active') {
+        // A late verified paid webhook can still settle this invoice.
+        stored.status = 'expired';
+        db.saveInvoice(stored);
       }
     }
+    // Retry persistence if a previous settlement failed to flush.
+    if (stored.status === 'paid') db.flushNow();
     return res.json({
       ok: true,
       invoice: publicCryptoInvoice(stored),

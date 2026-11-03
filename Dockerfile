@@ -28,13 +28,9 @@ WORKDIR /workspace
 COPY . .
 
 # Railway only passes service variables into a Docker build when the Dockerfile
-# explicitly declares matching ARGs. These two values are compiled into the
-# Android APK so it can reach the same gateway as the runtime service. They are
-# a deployment-pairing value, not a substitute for user authentication. Keep
-# provider secrets (especially CRYPTOBOT_TOKEN) runtime-only: never add them
-# as Docker build args or to an APK.
+# explicitly declares matching ARGs. Only the gateway URL is compiled into the
+# APK. Provider, authentication, SMTP and database secrets stay runtime-only.
 ARG MALO_GATEWAY_URL
-ARG MALO_CLIENT_KEY
 
 # `.env` is deliberately excluded from the Docker build context. Start with
 # non-secret defaults, then append Railway's build-time gateway variables in
@@ -42,7 +38,6 @@ ARG MALO_CLIENT_KEY
 # BuildConfig, and the final runtime image contains only the generated APK.
 RUN cp .env.example .env \
     && if [ -n "$MALO_GATEWAY_URL" ]; then printf '\nMALO_GATEWAY_URL=%s\n' "$MALO_GATEWAY_URL" >> .env; fi \
-    && if [ -n "$MALO_CLIENT_KEY" ]; then printf 'MALO_CLIENT_KEY=%s\n' "$MALO_CLIENT_KEY" >> .env; fi \
     && chmod +x build.sh start.sh \
     && ./build.sh \
     && rm -f .env
@@ -51,9 +46,9 @@ FROM node:20-alpine AS runtime
 
 WORKDIR /app
 
-# Payment gateway (ЮKassa card billing + CryptoBot webhooks).
+# Node gateway (PostgreSQL accounts + Ko-fi webhooks).
 COPY server/package.json server/package-lock.json* /app/server/
-RUN cd /app/server && npm ci --omit=dev || npm install --omit=dev
+RUN cd /app/server && npm ci --omit=dev
 COPY server/src /app/server/src
 
 COPY --from=builder /workspace/public /app/public

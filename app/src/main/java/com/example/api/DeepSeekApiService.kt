@@ -10,20 +10,9 @@ data class DeepSeekMessage(
 )
 
 @JsonClass(generateAdapter = true)
-data class MaloChatRequest(
-    @Json(name = "userId") val userId: String,
-    @Json(name = "messages") val messages: List<DeepSeekMessage>
-)
-
-@JsonClass(generateAdapter = true)
 data class MaloChatResponse(
     @Json(name = "ok") val ok: Boolean = false,
     @Json(name = "reply") val reply: String
-)
-
-@JsonClass(generateAdapter = true)
-data class MaloBurnRequest(
-    @Json(name = "userId") val userId: String
 )
 
 @JsonClass(generateAdapter = true)
